@@ -1,0 +1,47 @@
+# 面试辅助工具配置文件
+
+# 大模型配置
+llm:
+  # 模式选择："qwen" 或 "ollama" 或 "lmstudio"
+  mode: "qwen"
+  
+  # 通义千问 API 配置
+  qwen:
+    api_key: "YOUR_DASHSCOPE_API_KEY"  # ← 替换为你的 API Key
+    model: "qwen-max"
+  
+  # Ollama 配置
+  ollama:
+    base_url: "http://localhost:11434"
+    model: "qwen2.5:7b"
+  
+  # LM Studio 配置
+  lmstudio:
+    base_url: "http://localhost:1234"
+    model: "local-model"
+
+# 音频配置
+audio:
+  # 输入设备索引 (VB-Cable 通常为 1，可通过 python -m sounddevice 查看)
+  input_device_index: 1
+  # 是否使用麦克风 (false 为系统内录)
+  use_microphone: false
+
+# STT 配置
+stt:
+  # Whisper 模型：tiny, base, small, medium, large-v2
+  # RTX 5060Ti 16GB 推荐使用 medium 或 small
+  model: "medium"
+  # 语言：zh 为中文，空为自动检测
+  language: "zh"
+  # 是否使用 GPU
+  device: "cuda"
+
+# UI 配置
+ui:
+  # 字幕窗口高度 (像素)
+  overlay_height: 140
+  # 字幕窗口宽度比例 (0.85 = 85% 屏幕宽度)
+  overlay_width_ratio: 0.85
+  # 字体大小
+  font_size: 28
