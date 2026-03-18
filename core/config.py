@@ -95,7 +95,7 @@ class Config:
     @property
     def qwen_model(self) -> str:
         """获取通义千问模型"""
-        return self.get("llm.qwen.model", "qwen-max")
+        return self.get("llm.qwen.model", "qwen3.5-plus")
     
     @property
     def ollama_url(self) -> str:

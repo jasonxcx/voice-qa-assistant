@@ -5,13 +5,14 @@
 - 顶部拖动条（可拖动窗口，双击隐藏）
 - 控制按钮：隐藏、字体变大、字体变小、上一条、下一条
 - F12 快捷键显示/隐藏
+- 鼠标拖动边缘调节窗口大小
 - 显示"等待音频输入..."占位符
 """
 from PyQt5.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton,
-    QGraphicsDropShadowEffect
+    QGraphicsDropShadowEffect, QSizeGrip
 )
-from PyQt5.QtCore import Qt, QPoint, QTimer, pyqtSignal, QEvent, QPropertyAnimation, QEasingCurve
+from PyQt5.QtCore import Qt, QPoint, QTimer, pyqtSignal, QEvent, QPropertyAnimation, QEasingCurve, QRect
 from PyQt5.QtGui import QFont, QColor, QCursor
 from collections import deque
 
@@ -120,7 +121,7 @@ class CaptionHistory(QWidget):
         font.setWeight(QFont.Normal)
         self.content_label.setFont(font)
 
-    def add_caption(self, text, caption_type="normal"):
+    def add_caption(self, text, caption_type="answer"):
         if len(self.history) == 0:
             self.content_label.setText("")
             self._set_content_style()
@@ -148,10 +149,8 @@ class CaptionHistory(QWidget):
             self.page_label.setText("0 / 0")
             return
 
-        start = max(0, self.current_index - 4)
-        end = self.current_index + 1
-        texts = list(self.history)[start:end]
-
+        # 只显示当前一条，不显示历史记录
+        texts = [list(self.history)[self.current_index]]
         html = "<br/>".join(texts)
         self.content_label.setText(html)
         self.page_label.setText(f"{self.current_index + 1} / {len(self.history)}")
@@ -278,7 +277,7 @@ class DragBar(QWidget):
 
 
 class OverlayWindow(QWidget):
-    """透明字幕窗口"""
+    """透明字幕窗口 - 支持鼠标调节大小"""
 
     # 可见性变化信号
     visibilityChanged = pyqtSignal(bool)
@@ -289,6 +288,10 @@ class OverlayWindow(QWidget):
         self.config = config
         self._font_size = config.font_size
         self._drag_bar_hover = False
+        self._resizing = False
+        self._resize_rect = QRect()
+        self._resize_handle_size = 20  # 调节区域大小
+        self._mouse_in_resize_area = False
         self._init_ui()
         self._setup_window_flags()
         self.setMouseTracking(True)
@@ -296,7 +299,7 @@ class OverlayWindow(QWidget):
         # 定时器检测鼠标位置
         self._hover_timer = QTimer()
         self._hover_timer.timeout.connect(self._check_hover_state)
-        self._hover_timer.start(100)
+        self._hover_timer.start(50)  # 更频繁的检测
 
     def _init_ui(self):
         self.setObjectName("overlayWindow")
@@ -310,7 +313,8 @@ class OverlayWindow(QWidget):
         overlay_height = self.config.overlay_height
         overlay_width = int(screen.width() * self.config.overlay_width_ratio)
 
-        self.setFixedSize(overlay_width, overlay_height)
+        self.setMinimumSize(400, 200)  # 设置最小尺寸
+        self.resize(overlay_width, overlay_height)
 
         x = screen.left() + (screen.width() - overlay_width) // 2
         y = screen.bottom() - overlay_height - 40
@@ -325,12 +329,13 @@ class OverlayWindow(QWidget):
         self.drag_bar.double_clicked.connect(self._on_drag_bar_double_click)
         main_layout.addWidget(self.drag_bar)
 
-        # 2. 内容区域
+        # 2. 内容区域 - 添加边框以便可见
         content_widget = QWidget()
         content_widget.setObjectName("contentWidget")
         content_widget.setStyleSheet("""
             QWidget#contentWidget {
-                background-color: transparent;
+                background-color: rgba(30, 30, 30, 200);
+                border: 1px solid rgba(255, 255, 255, 64);
                 border-bottom-left-radius: 12px;
                 border-bottom-right-radius: 12px;
             }
@@ -366,9 +371,16 @@ class OverlayWindow(QWidget):
         self.font_up_btn.clicked.connect(self._on_font_up_clicked)
         self.font_up_btn.setStyleSheet(self._action_button_stylesheet())
 
+        # 添加大小调节提示标签
+        self.resize_label = QLabel("⇘ 拖动右下角调节大小")
+        self.resize_label.setAlignment(Qt.AlignCenter)
+        self.resize_label.setStyleSheet("color: rgba(255, 255, 255, 102); font-size: 10px;")
+        self.resize_label.setAttribute(Qt.WA_TransparentForMouseEvents)
+
         button_layout.addWidget(self.hide_btn)
         button_layout.addWidget(self.font_down_btn)
         button_layout.addWidget(self.font_up_btn)
+        button_layout.addWidget(self.resize_label)
         button_layout.addStretch()
 
         content_layout.addLayout(button_layout)
@@ -438,6 +450,22 @@ class OverlayWindow(QWidget):
         drag_bar_rect = self.drag_bar.geometry()
         in_drag_bar = drag_bar_rect.contains(global_mouse_pos)
 
+        # 检查是否在右下角调节区域
+        rect = self.rect()
+        resize_rect = QRect(
+            rect.right() - self._resize_handle_size,
+            rect.bottom() - self._resize_handle_size,
+            self._resize_handle_size,
+            self._resize_handle_size
+        )
+        in_resize_area = resize_rect.contains(global_mouse_pos)
+
+        # 更新鼠标光标
+        if in_resize_area and not self._resizing:
+            self.setCursor(Qt.SizeFDiagCursor)
+        elif not in_resize_area and not self._resizing:
+            self.setCursor(Qt.ArrowCursor)
+
         if in_drag_bar != self._drag_bar_hover:
             self._drag_bar_hover = in_drag_bar
             if in_drag_bar:
@@ -446,6 +474,42 @@ class OverlayWindow(QWidget):
             else:
                 self.drag_bar._mouse_inside = False
                 self.drag_bar._update_style()
+
+    def mousePressEvent(self, event):
+        """鼠标按下事件 - 处理右下角调节大小"""
+        if event.button() == Qt.LeftButton:
+            rect = self.rect()
+            resize_rect = QRect(
+                rect.right() - self._resize_handle_size,
+                rect.bottom() - self._resize_handle_size,
+                self._resize_handle_size,
+                self._resize_handle_size
+            )
+            if resize_rect.contains(event.pos()):
+                self._resizing = True
+                event.accept()
+                return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        """鼠标移动事件 - 处理窗口大小调节"""
+        if self._resizing:
+            # 计算新的大小
+            new_size = self.mapFromGlobal(QCursor.pos())
+            new_width = max(self.minimumWidth(), new_size.x())
+            new_height = max(self.minimumHeight(), new_size.y())
+            self.resize(new_width, new_height)
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        """鼠标释放事件"""
+        if event.button() == Qt.LeftButton:
+            self._resizing = False
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
 
     def _on_hide_clicked(self):
         self.hide()
@@ -478,7 +542,7 @@ class OverlayWindow(QWidget):
         self.config.set("ui.font_size", new_size)
         self.caption_history.set_font_size(new_size)
 
-    def update_caption(self, text, caption_type="normal"):
+    def update_caption(self, text, caption_type="answer"):
         self.caption_history.add_caption(text, caption_type)
 
     def clear_caption(self):

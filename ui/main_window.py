@@ -4,13 +4,18 @@
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QFileDialog, QGroupBox,
-    QComboBox, QLineEdit, QMessageBox, QFormLayout
+    QComboBox, QLineEdit, QMessageBox, QFormLayout,
+    QTextEdit, QSplitter
 )
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
 from typing import Optional, Dict, Any, List
 import sounddevice as sd
 import os
 import logging
+import datetime
+import asyncio
+import threading
+
 
 from core.config import Config
 from core.resume_parser import ResumeParser, parse_resume
@@ -131,7 +136,12 @@ class MainWindow(QMainWindow):
         ])
         self.stt_model_combo.setCurrentIndex(3)
         stt_form.addRow("模型:", self.stt_model_combo)
-        
+
+        self.stt_device_combo = QComboBox()
+        self.stt_device_combo.addItems(["CPU", "CUDA (GPU)"])
+        self.stt_device_combo.setCurrentIndex(1)  # 默认使用 GPU
+        stt_form.addRow("计算设备:", self.stt_device_combo)
+
         self.compute_type_combo = QComboBox()
         self.compute_type_combo.addItems(["float32 (兼容)", "float16 (快速)", "int8 (省显存)"])
         self.compute_type_combo.setCurrentIndex(0)
@@ -196,12 +206,58 @@ class MainWindow(QMainWindow):
         button_layout.addWidget(self.save_btn)
         
         layout.addLayout(button_layout)
-        
+
         # 字幕状态
         self.caption_status = QLabel("字幕窗口：未显示（点击开始监听后显示，拖动顶部灰色条移动窗口，F12 显示/隐藏）")
         self.caption_status.setStyleSheet("color: #9AA0A6; font-size: 11px;")
         layout.addWidget(self.caption_status)
-        
+
+        # 转录日志区域
+        log_group = QGroupBox("转录日志")
+        log_layout = QVBoxLayout(log_group)
+
+        # 转录日志文本框
+        self.transcription_log = QTextEdit()
+        self.transcription_log.setReadOnly(True)
+        self.transcription_log.setMaximumHeight(150)
+        self.transcription_log.setStyleSheet("""
+            QTextEdit {
+                background-color: #1E1E1E;
+                color: #9AA0A6;
+                border: 1px solid #2D2D2D;
+                border-radius: 4px;
+                padding: 8px;
+                font-family: 'Consolas', 'Monaco', monospace;
+                font-size: 12px;
+            }
+        """)
+        self.transcription_log.setPlaceholderText("转录的问题将显示在这里...")
+        log_layout.addWidget(self.transcription_log)
+
+        # 日志控制按钮
+        log_control_layout = QHBoxLayout()
+        self.clear_log_btn = QPushButton("清空日志")
+        self.clear_log_btn.setFixedHeight(28)
+        self.clear_log_btn.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(255, 100, 100, 100);
+                color: #FFFFFF;
+                border: none;
+                border-radius: 4px;
+                padding: 4px 10px;
+                font-size: 11px;
+            }
+            QPushButton:hover {
+                background-color: rgba(255, 100, 100, 150);
+            }
+        """)
+        self.clear_log_btn.clicked.connect(self._clear_transcription_log)
+        log_control_layout.addWidget(self.clear_log_btn)
+        log_control_layout.addStretch()
+        log_layout.addLayout(log_control_layout)
+
+        layout.addWidget(log_group)
+
         self._update_ui_state()
     
     def _load_audio_devices(self):
@@ -237,13 +293,18 @@ class MainWindow(QMainWindow):
         mode_map = {"qwen": 0, "ollama": 1, "lmstudio": 2}
         self.llm_combo.setCurrentIndex(mode_map.get(self.config.llm_mode, 0))
         self.ollama_url_input.setText(self.config.ollama_url)
-        
+
         model_map = {"tiny": 0, "base": 1, "small": 2, "medium": 3, "large-v2": 4}
         self.stt_model_combo.setCurrentIndex(model_map.get(self.config.stt_model, 3))
-        
+
+        # 同步 STT 设备选择
+        device_map = {"cpu": 0, "cuda": 1, "gpu": 1}
+        stt_device = self.config.get("stt.local.device", "cuda").lower()
+        self.stt_device_combo.setCurrentIndex(device_map.get(stt_device, 1))
+
         compute_map = {"float32": 0, "float16": 1, "int8": 2}
         self.compute_type_combo.setCurrentIndex(compute_map.get(self.config.get("stt.local.compute_type", "float32"), 0))
-        
+
         for idx, dev in enumerate(self.audio_devices):
             if dev['index'] == self.config.audio_device_index:
                 self.audio_device_combo.setCurrentIndex(idx)
@@ -353,15 +414,20 @@ class MainWindow(QMainWindow):
         model_map = {0: "tiny", 1: "base", 2: "small", 3: "medium", 4: "large-v2"}
         stt_model = model_map.get(self.stt_model_combo.currentIndex(), "medium")
         self.config.set("stt.model", stt_model)
-        
+
+        # 更新 STT 设备选择
+        device_map = {0: "cpu", 1: "cuda"}
+        stt_device = device_map.get(self.stt_device_combo.currentIndex(), "cuda")
+        self.config.set("stt.local.device", stt_device)
+
         compute_map = {0: "float32", 1: "float16", 2: "int8"}
         compute_type = compute_map.get(self.compute_type_combo.currentIndex(), "float32")
         self.config.set("stt.local.compute_type", compute_type)
-        
+
         if self.audio_device_combo.currentIndex() < len(self.audio_devices):
             device_index = self.audio_devices[self.audio_device_combo.currentIndex()]['index']
             self.config.set("audio.input_device_index", device_index)
-        
+
         self.config.set("llm.ollama.base_url", self.ollama_url_input.text())
     
     def _update_ui_state(self):
@@ -385,6 +451,7 @@ class MainWindow(QMainWindow):
                 }
             """)
             self.stt_model_combo.setEnabled(False)
+            self.stt_device_combo.setEnabled(False)
             self.compute_type_combo.setEnabled(False)
             self.audio_device_combo.setEnabled(False)
             self.llm_combo.setEnabled(False)
@@ -405,6 +472,7 @@ class MainWindow(QMainWindow):
                 }
             """)
             self.stt_model_combo.setEnabled(True)
+            self.stt_device_combo.setEnabled(True)
             self.compute_type_combo.setEnabled(True)
             self.audio_device_combo.setEnabled(True)
             self.llm_combo.setEnabled(True)
@@ -415,15 +483,24 @@ class MainWindow(QMainWindow):
         self.status_label.setStyleSheet(f"color: {STATUS_COLORS['idle']};")
     
     def _on_transcription_ready(self, text: str):
-        """转录文本就绪"""
+        """转录文本就绪 - 显示在主窗口日志，发送问题给 LLM"""
+        # 添加时间戳
+        timestamp = datetime.datetime.now().strftime("%H:%M:%S")
+        log_entry = f"[{timestamp}] 问题：{text}"
+        self.transcription_log.append(log_entry)
+
+        # 问题发送到字幕窗口（不显示转录，直接显示"正在生成回答..."）
+        self.overlay.update_caption("正在生成回答...", "listening")
+
+        # 添加到队列并处理
         self.caption_queue.append(("question", text))
         self.status_label.setText("● 正在生成回答...")
         self.status_label.setStyleSheet(f"color: {STATUS_COLORS['generating']};")
         # 立即处理队列
         self._process_caption_queue()
-    
+
     def _on_realtime_update(self, text: str):
-        """实时转录更新"""
+        """实时转录更新 - 显示在主窗口日志"""
         self.status_label.setText(f"● 听写中...")
         self.status_label.setStyleSheet(f"color: {STATUS_COLORS['listening']};")
     
@@ -485,40 +562,80 @@ class MainWindow(QMainWindow):
         """处理字幕队列"""
         if not self.caption_queue:
             return
-        
+
         item_type, text = self.caption_queue.pop(0)
-        
+
         if item_type == "question":
-            self.overlay.update_caption(text, "listening")
-            
-            import asyncio
+            # 不显示转录问题，直接显示"正在生成回答..."
+            # 使用独立线程运行异步 LLM 调用
+            threading.Thread(target=self._run_generate_answer, args=(text,), daemon=True).start()
+
+    def _run_generate_answer(self, question: str):
+        """在独立线程中运行异步 LLM 生成"""
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
             try:
-                loop = asyncio.get_event_loop()
-            except RuntimeError:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-            
-            asyncio.ensure_future(self._generate_and_show_answer(text), loop=loop)
-    
+                loop.run_until_complete(self._generate_and_show_answer(question))
+            finally:
+                loop.close()
+        except Exception as e:
+            # 在线程中捕获异常并更新 UI
+            from PyQt5.QtCore import QTimer
+            error_msg = f"生成失败：{str(e)}"
+            QTimer.singleShot(0, lambda: self._on_llm_error(error_msg))
+
+    def _on_llm_error(self, error_msg: str):
+        """LLM 错误处理"""
+        log_system(error_msg, logging.ERROR)
+        self.overlay.update_caption(f"错误：{error_msg}", "error")
+        self.status_label.setText("● 错误")
+        self.status_label.setStyleSheet(f"color: {STATUS_COLORS['error']};")
+
+        # 检测 503 错误，提示用户切换 LLM
+        if "503" in error_msg or "Service Unavailable" in error_msg:
+            QMessageBox.warning(self, "LLM 服务不可用",
+                f"LM Studio 服务不可用 (503 错误)。\n\n"
+                f"请确保：\n"
+                f"1. LM Studio 已启动并加载了模型\n"
+                f"2. 服务器运行在 http://localhost:1234\n\n"
+                f"或者切换到其他 LLM 模式：\n"
+                f"- 通义千问 (云端)\n"
+                f"- Ollama (本地)")
+
     async def _generate_and_show_answer(self, question: str):
         """生成并显示回答"""
         try:
             log_system(f"收到问题：{question[:100]}", logging.INFO)
             answer = await self.llm_client.generate_answer(question, self.resume_data)
-            
+
             log_llm(question, answer, self.config.llm_mode)
             log_system(f"生成回答：{answer[:100]}", logging.INFO)
-            
-            self.overlay.update_caption(answer, "answer")
-            self.status_label.setText("● 就绪")
-            self.status_label.setStyleSheet(f"color: {STATUS_COLORS['idle']};")
+
+            # 使用 QTimer.singleShot 确保 UI 更新在主线程中执行
+            from PyQt5.QtCore import QTimer
+            QTimer.singleShot(0, lambda: self._update_ui_with_answer(answer))
         except Exception as e:
             error_msg = f"生成失败：{str(e)}"
             log_system(error_msg, logging.ERROR)
-            self.overlay.update_caption(f"错误：{error_msg}", "error")
-            self.status_label.setText("● 错误")
-            self.status_label.setStyleSheet(f"color: {STATUS_COLORS['error']};")
-    
+            from PyQt5.QtCore import QTimer
+            QTimer.singleShot(0, lambda: self._on_llm_error(error_msg))
+
+    def _update_ui_with_answer(self, answer: str):
+        """在主线程中更新 UI 显示回答"""
+        timestamp = datetime.datetime.now().strftime("%H:%M:%S")
+        log_entry = f"[{timestamp}] 回答：{answer}"
+        self.transcription_log.append(log_entry)
+
+        # 回答显示在字幕窗口
+        self.overlay.update_caption(answer, "answer")
+        self.status_label.setText("● 就绪")
+        self.status_label.setStyleSheet(f"color: {STATUS_COLORS['idle']};")
+
+    def _clear_transcription_log(self):
+        """清空转录日志"""
+        self.transcription_log.clear()
+
     def _open_log_folder(self):
         """打开日志文件夹"""
         import subprocess

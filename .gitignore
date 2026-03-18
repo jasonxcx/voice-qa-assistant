@@ -1,5 +1,7 @@
 # Worktrees
 .worktrees/
+.claude
+debug_audio
 worktrees/
 
 # Python

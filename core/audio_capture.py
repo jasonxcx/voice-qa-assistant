@@ -42,13 +42,25 @@ class AudioCapture(QObject):
             model_name = self.config.get('stt', {}).get('model', 'tiny')
             device = self.config.get('stt.local', {}).get('device', 'cpu')
 
-            log_system(f"加载 Faster-Whisper 模型：{model_name} (device={device})", logging.INFO)
-            print(f"[AudioCapture] 加载 STT 模型：{model_name}...", flush=True)
+            # 映射设备名称：gpu -> cuda (Faster-Whisper 使用 cuda 而不是 gpu)
+            if device.lower() == 'gpu':
+                device = 'cuda'
+
+            # 根据设备选择计算类型
+            if device == 'cuda':
+                compute_type = 'float16'  # GPU 使用 float16 加速
+            elif device == 'cpu':
+                compute_type = 'float32'  # CPU 使用 float32
+            else:
+                compute_type = 'int8'  # 其他设备使用 int8
+
+            log_system(f"加载 Faster-Whisper 模型：{model_name} (device={device}, compute_type={compute_type})", logging.INFO)
+            print(f"[AudioCapture] 加载 STT 模型：{model_name} (device={device})...", flush=True)
 
             self.stt_model = WhisperModel(
                 model_size_or_path=model_name,
                 device=device,
-                compute_type='float32' if device == 'cpu' else 'float16',
+                compute_type=compute_type,
             )
 
             log_system("Faster-Whisper 模型加载成功", logging.INFO)
@@ -128,12 +140,12 @@ class AudioCapture(QObject):
             audio_buffer = []
             silence_start = None
             speech_detected = False
-            silence_threshold = 0.018  # 静音阈值（调整以检测真实语音）
-            silence_duration_threshold = 1.5  # 静音持续时间（秒）后触发转录
+            silence_threshold = 0.01  # 静音阈值 - 降低以捕获更弱的语音
+            silence_duration_threshold = 1.2  # 静音持续时间（秒）后触发转录 - 降低以更快响应
             last_log_time = 0
             transcription_count = 0
             last_volume_log = 0
-            min_audio_duration = 1.0  # 最小录音时长（秒）- 降低以捕获更短的语音
+            min_audio_duration = 0.5  # 最小录音时长（秒）- 降低以捕获短句
 
             # 主录音循环
             while self._running:
@@ -148,12 +160,7 @@ class AudioCapture(QObject):
 
                     # 检测是否有人声（简单的音量阈值）
                     is_speech = volume > silence_threshold
-
-                    # 详细调试：每秒打印一次音量
                     current_time = time.time()
-                    if current_time - last_volume_log > 1.0:
-                        print(f"[AudioCapture] 音量：{volume:.5f}, 阈值：{silence_threshold}, 语音：{is_speech}", flush=True)
-                        last_volume_log = current_time
 
                     if is_speech:
                         # 检测到声音，重置静音计时器
@@ -179,9 +186,11 @@ class AudioCapture(QObject):
                                     transcription_count += 1
                                     print(f"[AudioCapture] >>> 转录 #{transcription_count} ({audio_duration:.1f}秒)...", flush=True)
 
-                                    self._transcribe_buffer(audio_buffer, sample_rate)
+                                    self._transcribe_buffer(audio_buffer, sample_rate, channels=channels)
                                 else:
                                     print(f"[AudioCapture] 音频太短 ({audio_duration:.1f}秒 < {min_audio_duration}秒)，跳过", flush=True)
+
+                                # 无论是否转录，都清空缓冲区并开始新的检测
                                 audio_buffer = []
                                 speech_detected = False
                                 silence_start = None
@@ -207,7 +216,7 @@ class AudioCapture(QObject):
             # 停止时转录剩余缓冲区
             if audio_buffer:
                 print(f"[AudioCapture] 转录剩余缓冲区...", flush=True)
-                self._transcribe_buffer(audio_buffer, sample_rate)
+                self._transcribe_buffer(audio_buffer, sample_rate, channels=channels)
 
             stream.close()
             p.terminate()
@@ -224,7 +233,7 @@ class AudioCapture(QObject):
             traceback.print_exc()
             self.error_occurred.emit(error_msg)
 
-    def _transcribe_buffer(self, audio_buffer, sample_rate):
+    def _transcribe_buffer(self, audio_buffer, sample_rate, channels=2, save_debug=False):
         """转录音频缓冲区"""
         try:
             if not audio_buffer or self.stt_model is None:
@@ -233,38 +242,51 @@ class AudioCapture(QObject):
             # 合并音频数据
             audio_data = np.concatenate(audio_buffer)
 
-            # 转换为 float32 并归一化（必须 float32，ONNX 需要）
-            audio_float = (audio_data.astype(np.float32) / 32768.0)
+            # 转换为 float32 并归一化
+            audio_float = audio_data.astype(np.float32) / 32768.0
 
-            # 重采样到 16kHz（Whisper 需要）
+            # 如果是立体声，转换为单声道（Whisper 需要单声道）
+            if channels == 2:
+                # 立体声数据：每 2 个样本是一帧，取左右声道的平均值
+                num_frames = len(audio_float) // 2
+                if num_frames * 2 == len(audio_float):  # 确保是偶数
+                    audio_float = audio_float[:num_frames*2].reshape(-1, 2).mean(axis=1)
+
+            # 使用 librosa 进行高质量重采样到 16kHz
             target_sample_rate = 16000
-            if sample_rate != target_sample_rate:
+            try:
+                import librosa
+                audio_float = librosa.resample(audio_float, orig_sr=sample_rate, target_sr=target_sample_rate)
+            except ImportError:
+                # librosa 不可用时使用 numpy 插值
                 num_samples = int(len(audio_float) * target_sample_rate / sample_rate)
                 audio_float = np.interp(
                     np.linspace(0, len(audio_float), num_samples),
                     np.arange(len(audio_float)),
                     audio_float
-                ).astype(np.float32)  # 确保 interp 后仍然是 float32
+                )
 
             audio_duration = len(audio_float) / target_sample_rate
-            print(f"[AudioCapture] 正在转录 ({audio_duration:.1f}秒音频)...", flush=True)
+            print(f"[AudioCapture] 正在转录 ({audio_duration:.1f}秒音频，模型={self.config.get('stt', {}).get('model', 'tiny')})...", flush=True)
 
-            # 转录配置 - 完全禁用 VAD
+            # 调试：保存音频文件
+            if save_debug:
+                self._save_debug_audio(audio_buffer, sample_rate, 0, "_debug", channels)
+
+            # 转录配置 - 优化参数以提高准确率
             segments, info = self.stt_model.transcribe(
                 audio_float,
                 language='zh',
-                beam_size=5,
-                best_of=5,
-                temperature=0.0,  # 使用固定温度，避免多次采样
-                vad_filter=False,
-                vad_parameters=None,
+                beam_size=10,      # 增加 beam size 提高准确率
+                best_of=10,        # 增加 best_of
+                temperature=0.0,   # 固定温度，避免随机性
+                vad_filter=False,  # 禁用 VAD，避免过滤掉有效语音
             )
 
             # 收集转录结果
             text_parts = []
             for segment in segments:
                 text_parts.append(segment.text.strip())
-                # 实时发送部分结果
                 if segment.text.strip():
                     self.real_time_update.emit(segment.text.strip())
 
@@ -272,7 +294,7 @@ class AudioCapture(QObject):
             text = text.strip()
 
             if text:
-                log_system(f"转录结果：{text[:100]}", logging.INFO)
+                log_system(f"转录结果：{text}", logging.INFO)
                 print(f"[AudioCapture] 转录：{text}", flush=True)
                 self.transcription_ready.emit(text)
             else:
@@ -283,6 +305,44 @@ class AudioCapture(QObject):
             print(f"[AudioCapture] 转录错误：{e}", flush=True)
             import traceback
             traceback.print_exc()
+
+    def _save_debug_audio(self, audio_buffer, sample_rate, transcription_count, suffix="", channels=2):
+        """保存调试音频到 WAV 文件"""
+        try:
+            import wave
+            import os
+
+            # 创建调试音频目录
+            debug_dir = os.path.join(os.getcwd(), 'debug_audio')
+            os.makedirs(debug_dir, exist_ok=True)
+
+            # 生成文件名
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            filename = f"debug_{timestamp}_#{transcription_count}{suffix}.wav"
+            filepath = os.path.join(debug_dir, filename)
+
+            # 合并音频数据
+            audio_data = np.concatenate(audio_buffer)
+
+            # 如果是立体声，转换为单声道
+            if channels == 2 and len(audio_data) % 2 == 0:
+                audio_mono = audio_data.reshape(-1, 2).mean(axis=1).astype(np.int16)
+            else:
+                audio_mono = audio_data
+
+            # 保存为 WAV 文件（单声道）
+            with wave.open(filepath, 'wb') as wf:
+                wf.setnchannels(1)  # 单声道
+                wf.setsampwidth(2)  # 16-bit
+                wf.setframerate(sample_rate)
+                wf.writeframes(audio_mono.tobytes())
+
+
+            print(f"[AudioCapture] 调试音频已保存：{filepath} (mono, {len(audio_mono)/sample_rate:.1f}秒)", flush=True)
+            log_system(f"调试音频已保存：{filepath}", logging.INFO)
+
+        except Exception as e:
+            print(f"[AudioCapture] 保存调试音频失败：{e}", flush=True)
 
     def _get_loopback_device(self, pyaudio_instance):
         """获取 WASAPI loopback 设备索引"""
