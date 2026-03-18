@@ -135,7 +135,7 @@ class Config:
     @property
     def stt_device(self) -> str:
         """获取 STT 计算设备"""
-        return self.get("stt.device", "cuda")
+        return self.get("stt.local.device", "cpu")
     
     @property
     def overlay_height(self) -> int:

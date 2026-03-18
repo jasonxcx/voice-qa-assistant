@@ -115,7 +115,7 @@ class CaptionHistory(QWidget):
             background: transparent;
         """)
 
-    def _update_font(self, size=28):
+    def _update_font(self, size=16):
         font = QFont("Microsoft YaHei", size)
         font.setWeight(QFont.Normal)
         self.content_label.setFont(font)
@@ -282,6 +282,7 @@ class OverlayWindow(QWidget):
 
     # 可见性变化信号
     visibilityChanged = pyqtSignal(bool)
+    sizes = [8, 12, 16, 20, 24, 28, 32, 36, 40]
 
     def __init__(self, config):
         super().__init__()
@@ -450,34 +451,28 @@ class OverlayWindow(QWidget):
         self.hide()
 
     def _on_font_down_clicked(self):
-        sizes = [16, 20, 24, 28, 32, 36, 40]
-        current = self._font_size
-
         try:
-            idx = sizes.index(current)
+            idx = self.sizes.index(self._font_size)
             if idx > 0:
-                new_size = sizes[idx - 1]
+                new_size = self.sizes[idx - 1]
             else:
-                new_size = sizes[0]
+                new_size = self.sizes[0]
         except ValueError:
-            new_size = 28
+            new_size = 16
 
         self._font_size = new_size
         self.config.set("ui.font_size", new_size)
         self.caption_history.set_font_size(new_size)
 
     def _on_font_up_clicked(self):
-        sizes = [16, 20, 24, 28, 32, 36, 40]
-        current = self._font_size
-
         try:
-            idx = sizes.index(current)
-            if idx < len(sizes) - 1:
-                new_size = sizes[idx + 1]
+            idx = self.sizes.index(self._font_size)
+            if idx < len(self.sizes) - 1:
+                new_size = self.sizes[idx + 1]
             else:
-                new_size = sizes[-1]
+                new_size = self.sizes[-1]
         except ValueError:
-            new_size = 28
+            new_size = 16
 
         self._font_size = new_size
         self.config.set("ui.font_size", new_size)

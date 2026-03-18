@@ -113,12 +113,6 @@ class MainWindow(QMainWindow):
         audio_form.addRow("", self.volume_label)
         
         audio_layout.addLayout(audio_form)
-        
-        # 提示
-        audio_tip = QLabel("提示：系统内录需安装 VB-Cable 并选择其作为输入设备")
-        audio_tip.setStyleSheet("color: #9AA0A6; font-size: 11px;")
-        audio_layout.addWidget(audio_tip)
-        
         layout.addWidget(audio_group)
         
         # STT 设置
@@ -425,6 +419,8 @@ class MainWindow(QMainWindow):
         self.caption_queue.append(("question", text))
         self.status_label.setText("● 正在生成回答...")
         self.status_label.setStyleSheet(f"color: {STATUS_COLORS['generating']};")
+        # 立即处理队列
+        self._process_caption_queue()
     
     def _on_realtime_update(self, text: str):
         """实时转录更新"""

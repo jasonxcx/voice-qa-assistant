@@ -18,44 +18,32 @@
 # 安装 PyTorch GPU 支持 (CUDA 11.8)
 pip install torch==2.5.1+cu118 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu118
 
+# 安装 PyTorch GPU 支持 (CUDA 12.8)
+pip install torch==2.7.1+cu128 torchaudio==2.7.1+cu128 --index-url https://download.pytorch.org/whl/cu128
+
 # 安装项目依赖
 pip install -r requirements.txt
 ```
 
-### 2. 配置 VB-Cable 系统内录
-
-**安装 VB-Cable:**
-1. 下载：https://vb-audio.com/Cable/
-2. 安装后重启电脑
-
-**Windows 声音设置:**
-1. 右键喇叭图标 → 声音设置
-2. 输出设备：选择 "VB-Cable Input"
-3. 输入设备：选择 "VB-Cable Output"
-
-**查看设备索引:**
-```bash
-python -m sounddevice
-```
-记录 VB-Cable 的索引号，填入 `config.yaml` 的 `audio.input_device_index`
-
-### 3. 配置 API Key
+### 2. 配置 API Key
 
 编辑 `config.yaml`:
 ```yaml
 llm:
   mode: "qwen"
   qwen:
+    base_url: "https://coding.dashscope.aliyuncs.com/v1" # 百炼Coding Plan计划
     api_key: "sk-xxx"  # 替换为你的 DashScope API Key
 ```
 
-或使用本地 Ollama:
+或使用本地 Ollama / LM Studio:
 ```yaml
 llm:
-  mode: "ollama"
+  mode: "ollama" # 或者 lmstudio
   ollama:
     base_url: "http://localhost:11434"
     model: "qwen2.5:7b"
+
 ```
 
 ### 4. 运行程序
