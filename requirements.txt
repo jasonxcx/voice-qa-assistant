@@ -4,10 +4,12 @@ PyQt5-sip>=12.13.0
 
 # RealtimeSTT 音频捕获 + STT
 RealtimeSTT>=0.3.100
+sounddevice>=0.4.6  # 音频设备查询
 
 # 大模型客户端
 openai>=1.0.0  # 兼容 Ollama/LM Studio
 dashscope>=1.14.0  # 阿里云通义千问 SDK
+httpx>=0.25.0  # HTTP 客户端
 
 # Markdown 简历解析
 mistune>=3.0.0
@@ -16,3 +18,6 @@ PyYAML>=6.0  # 配置文件
 # 工具库
 requests>=2.31.0
 numpy>=1.24.0
+
+# 日志
+colorama>=0.4.6  # 彩色日志（Windows）

@@ -15,10 +15,12 @@ class Config:
         初始化配置管理器
         
         Args:
-            config_path: 配置文件路径，默认使用同目录下的 config.yaml
+            config_path: 配置文件路径，默认使用项目根目录下的 config.yaml
         """
         if config_path is None:
-            self.config_path = Path(__file__).parent / "config.yaml"
+            # 获取项目根目录（core 的父目录）
+            project_root = Path(__file__).parent.parent
+            self.config_path = project_root / "config.yaml"
         else:
             self.config_path = Path(config_path)
         self.config = {}
@@ -124,6 +126,11 @@ class Config:
     def stt_language(self) -> str:
         """获取 STT 语言"""
         return self.get("stt.language", "zh")
+    
+    @property
+    def stt_compute_type(self) -> str:
+        """获取 STT 计算类型"""
+        return self.get("stt.local.compute_type", "float32")
     
     @property
     def stt_device(self) -> str:
