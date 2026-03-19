@@ -85,7 +85,7 @@ class Config:
     @property
     def llm_mode(self) -> str:
         """获取大模型模式"""
-        return self.get("llm.mode", "qwen")
+        return self.get("llm.mode", "openai")
     
     @property
     def llm_model(self) -> str:

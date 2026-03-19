@@ -93,9 +93,43 @@ class MainWindow(QMainWindow):
         
         llm_form = QFormLayout()
         self.llm_combo = QComboBox()
+        self.llm_combo.addItems(["OpenAI (云端)", "Ollama (本地)", "LM Studio (本地)"])
+        self.llm_combo.currentIndexChanged.connect(self._on_llm_changed)
+        llm_form.addRow("模型模式:", self.llm_combo)
+        
+        # 模型名称输入框（OpenAI/Ollama 模式使用）
+        self.model_name_input = QLineEdit()
+        self.model_name_input.setPlaceholderText("如：qwen3.5-plus, qwen2.5:7b")
+        self.model_name_input.setToolTip("可手动输入模型名称")
+        llm_form.addRow("模型名称:", self.model_name_input)
+        
+        # LM Studio 模型刷新按钮和下拉框
+        self.refresh_models_btn = QPushButton("🔄 刷新模型列表")
+        self.refresh_models_btn.setToolTip("从 LM Studio 获取可用模型")
+        self.refresh_models_btn.setFixedHeight(28)
+        self.refresh_models_btn.clicked.connect(self._refresh_lmstudio_models)
+        self.refresh_models_btn.setEnabled(False)
+        llm_form.addRow("", self.refresh_models_btn)
+        
+        self.model_combo = QComboBox()
+        self.model_combo.setEditable(False)  # 不可编辑，只能选择
+        self.model_combo.setToolTip("从 LM Studio 选择模型（鼠标悬停查看参数）")
+        self.model_combo.setEnabled(False)  # 默认禁用
+        self.model_combo.currentIndexChanged.connect(self._on_model_combo_changed)
+        llm_form.addRow("选择模型:", self.model_combo)
+        self.model_combo.setEditable(True)
+        self.model_combo.setToolTip("选择或输入模型名称 (仅 LM Studio 模式)")
+        self.model_combo.setEnabled(False)
+        llm_form.addRow("可选模型:", self.model_combo)
+        
+        # 连接模型选择信号
+        self.model_combo.currentTextChanged.connect(self._on_model_combo_changed)
+        
+        self.llm_combo = QComboBox()
+        self.llm_combo = QComboBox()
         self.llm_combo.addItems(["通义千问 (云端)", "Ollama (本地)", "LM Studio (本地)"])
         self.llm_combo.currentIndexChanged.connect(self._on_llm_changed)
-        llm_form.addRow("模型:", self.llm_combo)
+        llm_form.addRow("模型模式:", self.llm_combo)
         
         self.ollama_url_label = QLabel("Ollama URL:")
         self.ollama_url_input = QLineEdit()
@@ -298,9 +332,18 @@ class MainWindow(QMainWindow):
     
     def _sync_ui_with_config(self):
         """将配置同步到 UI"""
-        mode_map = {"qwen": 0, "ollama": 1, "lmstudio": 2}
+        mode_map = {"openai": 0, "ollama": 1, "lmstudio": 2}
         self.llm_combo.setCurrentIndex(mode_map.get(self.config.llm_mode, 0))
         self.ollama_url_input.setText(self.config.ollama_url)
+        self.model_name_input.setText(self.config.llm_model)
+        
+        # 根据当前模式设置 UI 可见性
+        is_lmstudio = (self.config.llm_mode == "lmstudio")
+        self.model_name_input.setVisible(not is_lmstudio)
+        self.model_combo.setVisible(is_lmstudio)
+        self.refresh_models_btn.setVisible(is_lmstudio)
+        self.model_combo.setEnabled(is_lmstudio)
+        self.refresh_models_btn.setEnabled(is_lmstudio)
 
         model_map = {"tiny": 0, "base": 1, "small": 2, "medium": 3, "large-v2": 4, "large-v3": 5}
         self.stt_model_combo.setCurrentIndex(model_map.get(self.config.stt_model, 3))
@@ -377,10 +420,10 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 QMessageBox.critical(self, "解析失败", f"简历解析失败：{str(e)}")
     
-    def _on_llm_changed(self, index):
-        """切换大模型"""
-        mode_map = {0: "qwen", 1: "ollama", 2: "lmstudio"}
-        mode = mode_map.get(index, "qwen")
+    def _on_llm_changed(self, index: int):
+        """切换 LLM 模式"""
+        mode_map = {0: "openai", 1: "ollama", 2: "lmstudio"}
+        mode = mode_map.get(index, "openai")
         
         url_map = {
             0: "",
@@ -393,9 +436,35 @@ class MainWindow(QMainWindow):
             2: "LM Studio URL:"
         }
         
+        # 默认模型映射
+        default_models = {
+            0: "qwen3.5-plus",
+            1: "qwen2.5:7b",
+            2: "local-model"
+        }
+        
         self.ollama_url_input.setText(url_map.get(index, ""))
         self.ollama_url_input.setEnabled(index != 0)
         self.ollama_url_label.setText(label_map.get(index, "URL:"))
+        
+        # 更新模型名称
+        self.model_name_input.setText(default_models.get(index, ""))
+        
+        # 启用/禁用 LM Studio 模型刷新按钮和下拉框
+        is_lmstudio = (index == 2)
+        
+        # OpenAI/Ollama 模式：显示模型名称输入框，隐藏模型选择下拉框
+        self.model_name_input.setVisible(not is_lmstudio)
+        self.model_combo.setVisible(is_lmstudio)
+        self.refresh_models_btn.setVisible(is_lmstudio)
+        
+        # 启用/禁用
+        self.model_combo.setEnabled(is_lmstudio)
+        self.refresh_models_btn.setEnabled(is_lmstudio)
+        
+        # 切换到 LM Studio 模式时自动刷新模型列表
+        if is_lmstudio:
+            self._refresh_lmstudio_models()
         
         try:
             self.llm_client.switch_mode(mode)
@@ -459,7 +528,168 @@ class MainWindow(QMainWindow):
             self.config.set("audio.input_device_index", device_index)
 
         self.config.set("llm.ollama.base_url", self.ollama_url_input.text())
+        
+        # 根据模式保存模型配置
+        if self.config.llm_mode == "lmstudio":
+            # LM Studio: 从下拉框获取模型 key
+            current_index = self.model_combo.currentIndex()
+            model_key = self.model_combo.itemData(current_index)
+            if model_key:
+                self.config.set("llm.model", model_key)
+        else:
+            # OpenAI/Ollama: 从输入框获取模型名称
+            model_name = self.model_name_input.text()
+            self.config.set("llm.model", model_name)
     
+    def _refresh_lmstudio_models(self):
+        """从 LM Studio 获取模型列表"""
+        if self.config.llm_mode != "lmstudio":
+            return
+        
+        self.refresh_models_btn.setText("⏳ 获取中...")
+        self.refresh_models_btn.setEnabled(False)
+        
+        def fetch_models():
+            try:
+                import requests
+                base_url = self.ollama_url_input.text().rstrip('/')
+                if not base_url:
+                    base_url = "http://localhost:1234"
+                
+                response = requests.get(f"{base_url}/api/v1/models", timeout=5)
+                if response.status_code == 200:
+                    data = response.json()
+                    # 提取 LLM 类型模型（保留完整信息）
+                    models = [
+                        model for model in data.get("models", [])
+                        if model.get("type") == "llm"
+                    ]
+                    from PyQt5.QtCore import QTimer
+                    QTimer.singleShot(0, lambda: self._update_model_combo(models))
+                else:
+                    from PyQt5.QtCore import QTimer
+                    QTimer.singleShot(0, lambda: self._update_model_combo([]))
+            except Exception as e:
+                from PyQt5.QtCore import QTimer
+                QTimer.singleShot(0, lambda: self._update_model_combo([]))
+        
+        threading.Thread(target=fetch_models, daemon=True).start()
+    
+    def _update_model_combo(self, models: List[Dict]):
+        """更新模型下拉框（带详细信息）"""
+        self.model_combo.clear()
+        
+        if models:
+            for model in models:
+                key = model.get("key", "unknown")
+                display_name = model.get("display_name", key)
+                
+                # 构建提示信息
+                tooltip_parts = []
+                
+                # 上下文长度
+                max_context = model.get("max_context_length")
+                if max_context:
+                    tooltip_parts.append(f"最大上下文：{max_context:,} tokens")
+                
+                # 已加载实例信息
+                loaded_instances = model.get("loaded_instances", [])
+                if loaded_instances:
+                    for instance in loaded_instances:
+                        config = instance.get("config", {})
+                        context_length = config.get("context_length")
+                        if context_length:
+                            tooltip_parts.append(f"运行时上下文：{context_length:,} tokens")
+                            break
+                
+                # 模型大小
+                size_bytes = model.get("size_bytes")
+                if size_bytes:
+                    size_gb = size_bytes / (1024 ** 3)
+                    tooltip_parts.append(f"模型大小：{size_gb:.2f} GB")
+                
+                # 量化信息
+                quantization = model.get("quantization", {})
+                if quantization:
+                    name = quantization.get("name")
+                    bits = quantization.get("bits_per_weight")
+                    if name and bits:
+                        tooltip_parts.append(f"量化：{name} ({bits}bit)")
+                
+                tooltip = "\n".join(tooltip_parts) if tooltip_parts else "无详细信息"
+                
+                # 添加模型到下拉框
+                self.model_combo.addItem(f"{display_name} ({key})", key)
+                # 设置提示
+                self.model_combo.setItemData(self.model_combo.count() - 1, tooltip, Qt.ToolTipRole)
+            
+            self.refresh_models_btn.setText("✅ 已更新")
+        else:
+            self.model_combo.addItem("未找到模型（请确保 LM Studio 已启动）", "")
+            self.refresh_models_btn.setText("🔄 重试")
+        
+        self.refresh_models_btn.setEnabled(True)
+        
+        from PyQt5.QtCore import QTimer
+        QTimer.singleShot(3000, lambda: self.refresh_models_btn.setText("🔄 刷新模型列表"))
+    
+    def _update_model_combo(self, models: List[str]):
+        """更新模型下拉框"""
+        self.model_combo.clear()
+        if models:
+            self.model_combo.addItems(models)
+            self.refresh_models_btn.setText("✅ 已更新")
+        else:
+            self.model_combo.addItem("未找到模型（请确保 LM Studio 已启动）")
+            self.refresh_models_btn.setText("🔄 重试")
+        self.refresh_models_btn.setEnabled(True)
+        # 3 秒后恢复按钮文字
+        from PyQt5.QtCore import QTimer
+        QTimer.singleShot(3000, lambda: self.refresh_models_btn.setText("🔄 刷新模型列表"))
+    
+    def _on_model_combo_changed(self, index: int):
+        """模型选择变化时更新配置"""
+        if self.config.llm_mode != "lmstudio":
+            return
+        
+        model_key = self.model_combo.itemData(index)
+        if model_key:
+            self.config.set("llm.model", model_key)
+    
+    def _update_config_from_ui(self):
+        """从 UI 更新配置"""
+        model_map = {0: "tiny", 1: "base", 2: "small", 3: "medium", 4: "large-v2", 5: "large-v3"}
+        stt_model = model_map.get(self.stt_model_combo.currentIndex(), "medium")
+        self.config.set("stt.model", stt_model)
+
+        # 更新 STT 设备选择
+        device_map = {0: "cpu", 1: "cuda"}
+        stt_device = device_map.get(self.stt_device_combo.currentIndex(), "cuda")
+        self.config.set("stt.local.device", stt_device)
+
+        compute_map = {0: "float32", 1: "float16", 2: "int8"}
+        compute_type = compute_map.get(self.compute_type_combo.currentIndex(), "float32")
+        self.config.set("stt.local.compute_type", compute_type)
+
+        # 安全获取音频设备索引，避免越界
+        current_index = self.audio_device_combo.currentIndex()
+        if 0 <= current_index < len(self.audio_devices):
+            device_index = self.audio_devices[current_index]['index']
+            self.config.set("audio.input_device_index", device_index)
+
+        self.config.set("llm.ollama.base_url", self.ollama_url_input.text())
+        
+        # 根据模式保存模型配置
+        if self.config.llm_mode == "lmstudio":
+            # LM Studio: 从下拉框获取模型 key
+            current_index = self.model_combo.currentIndex()
+            model_key = self.model_combo.itemData(current_index)
+            if model_key:
+                self.config.set("llm.model", model_key)
+        else:
+            # OpenAI/Ollama: 从输入框获取模型名称
+            model_name = self.model_name_input.text()
+            self.config.set("llm.model", model_name)
     def _update_ui_state(self):
         """更新 UI 状态"""
         # 如果模型正在加载，不更新按钮状态

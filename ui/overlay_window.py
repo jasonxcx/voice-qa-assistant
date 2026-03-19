@@ -289,6 +289,7 @@ class OverlayWindow(QWidget):
         self._font_size = config.font_size
         self._drag_bar_hover = False
         self._resizing = False
+        self._resize_from_corner = None  # 记录从哪个角调节
         self._resize_rect = QRect()
         self._resize_handle_size = 20  # 调节区域大小
         self._mouse_in_resize_area = False
@@ -378,7 +379,7 @@ class OverlayWindow(QWidget):
         self.font_up_btn.setStyleSheet(self._action_button_stylesheet())
 
         # 添加大小调节提示标签
-        self.resize_label = QLabel("⇘ 拖动右下角调节大小")
+        self.resize_label = QLabel("⇙ 或 ⇘ 拖动调节大小")
         self.resize_label.setAlignment(Qt.AlignCenter)
         self.resize_label.setStyleSheet("color: rgba(255, 255, 255, 102); font-size: 10px;")
         self.resize_label.setAttribute(Qt.WA_TransparentForMouseEvents)
@@ -458,6 +459,31 @@ class OverlayWindow(QWidget):
 
         # 检查是否在右下角调节区域
         rect = self.rect()
+        bottom_right_rect = QRect(
+            rect.right() - self._resize_handle_size,
+            rect.bottom() - self._resize_handle_size,
+            self._resize_handle_size,
+            self._resize_handle_size
+        )
+        in_bottom_right = bottom_right_rect.contains(global_mouse_pos)
+        
+        # 检查是否在左下角调节区域
+        bottom_left_rect = QRect(
+            rect.left(),
+            rect.bottom() - self._resize_handle_size,
+            self._resize_handle_size,
+            self._resize_handle_size
+        )
+        in_bottom_left = bottom_left_rect.contains(global_mouse_pos)
+        
+        # 更新鼠标光标
+        if in_bottom_left and not self._resizing:
+            self.setCursor(Qt.SizeBDiagCursor)  # ↘ 光标 (左下角)
+        elif in_bottom_right and not self._resizing:
+            self.setCursor(Qt.SizeFDiagCursor)  # ↖ 光标 (右下角)
+        elif not in_bottom_left and not in_bottom_right and not self._resizing:
+            self.setCursor(Qt.ArrowCursor)
+        rect = self.rect()
         resize_rect = QRect(
             rect.right() - self._resize_handle_size,
             rect.bottom() - self._resize_handle_size,
@@ -482,6 +508,36 @@ class OverlayWindow(QWidget):
                 self.drag_bar._update_style()
 
     def mousePressEvent(self, event):
+        """鼠标按下事件 - 处理左下角和右下角调节大小"""
+        if event.button() == Qt.LeftButton:
+            rect = self.rect()
+            
+            # 检查左下角区域
+            bottom_left_rect = QRect(
+                rect.left(),
+                rect.bottom() - self._resize_handle_size,
+                self._resize_handle_size,
+                self._resize_handle_size
+            )
+            if bottom_left_rect.contains(event.pos()):
+                self._resizing = True
+                self._resize_from_corner = "bottom_left"
+                event.accept()
+                return
+            
+            # 检查右下角区域
+            bottom_right_rect = QRect(
+                rect.right() - self._resize_handle_size,
+                rect.bottom() - self._resize_handle_size,
+                self._resize_handle_size,
+                self._resize_handle_size
+            )
+            if bottom_right_rect.contains(event.pos()):
+                self._resizing = True
+                self._resize_from_corner = "bottom_right"
+                event.accept()
+                return
+        super().mousePressEvent(event)
         """鼠标按下事件 - 处理右下角调节大小"""
         if event.button() == Qt.LeftButton:
             rect = self.rect()
@@ -500,6 +556,31 @@ class OverlayWindow(QWidget):
     def mouseMoveEvent(self, event):
         """鼠标移动事件 - 处理窗口大小调节"""
         if self._resizing:
+            rect = self.rect()
+            cursor_global_pos = QCursor.pos()
+            
+            if self._resize_from_corner == "bottom_left":
+                # 左下角调节：固定右边界，调整左边界和高度
+                new_left = self.mapFromGlobal(cursor_global_pos).x()
+                new_right = rect.right()
+                new_width = new_right - new_left
+                new_height = self.mapFromGlobal(cursor_global_pos).y() - rect.top()
+                
+                if new_width >= self.minimumWidth() and new_height >= self.minimumHeight():
+                    # 调整窗口大小和位置
+                    self.setGeometry(new_left, rect.top(), new_width, new_height)
+            else:
+                # 右下角调节：固定左边界，调整宽度和高度
+                new_size = self.mapFromGlobal(cursor_global_pos)
+                new_width = max(self.minimumWidth(), new_size.x())
+                new_height = max(self.minimumHeight(), new_size.y())
+                self.resize(new_width, new_height)
+            
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+        """鼠标移动事件 - 处理窗口大小调节"""
+        if self._resizing:
             # 计算新的大小
             new_size = self.mapFromGlobal(QCursor.pos())
             new_width = max(self.minimumWidth(), new_size.x())
@@ -510,6 +591,13 @@ class OverlayWindow(QWidget):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
+        """鼠标释放事件"""
+        if event.button() == Qt.LeftButton:
+            self._resizing = False
+            self._resize_from_corner = None
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
         """鼠标释放事件"""
         if event.button() == Qt.LeftButton:
             self._resizing = False

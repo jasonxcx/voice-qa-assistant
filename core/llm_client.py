@@ -3,7 +3,7 @@
 """
 import json
 import httpx
-from typing import Optional, Callable, AsyncGenerator
+from typing import Optional, Callable, AsyncGenerator, List
 from abc import ABC, abstractmethod
 import logging
 from openai import OpenAI
@@ -74,6 +74,56 @@ class QwenClient(BaseLLMClient):
                     callback(content)
         
         return full_content
+
+
+class OllamaClient(BaseLLMClient):
+    """Ollama API 客户端（使用 OpenAI 兼容接口）"""
+
+    def __init__(self, base_url: str, model: str):
+        self.base_url = base_url
+        self.model = model
+        self.client = OpenAI(base_url=base_url, api_key="ollama")
+
+    async def generate(self, prompt: str, system_prompt: str = "") -> str:
+        """使用 OpenAI 库同步生成回答"""
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+        
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            stream=False,
+            max_tokens=500
+        )
+        return response.choices[0].message.content
+
+    async def generate_stream(self, prompt: str, system_prompt: str = "",
+                              callback: Optional[Callable[[str], None]] = None) -> str:
+        """使用 OpenAI 库流式生成回答"""
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+        
+        stream = self.client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            stream=True,
+            max_tokens=500
+        )
+        
+        full_content = ""
+        for chunk in stream:
+            if chunk.choices and chunk.choices[0].delta.content:
+                content = chunk.choices[0].delta.content
+                full_content += content
+                if callback:
+                    callback(content)
+        
+        return full_content
+
 
 
     async def generate_stream(self, prompt: str, system_prompt: str = "",
@@ -183,50 +233,25 @@ class LMStudioClient(BaseLLMClient):
             if "503" in str(e):
                 raise Exception("LM Studio 服务不可用 (503 错误) - 请确保 LM Studio 已启动并加载了模型")
             raise Exception(f"LM Studio 请求失败：{str(e)}")
+    
+    def get_available_models(self) -> List[str]:
+        """获取 LM Studio 可用模型列表"""
+        try:
+            import requests
+            response = requests.get(f"{self.base_url}/api/v1/models", timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                # 提取 LLM 类型的模型 key
+                models = [
+                    model["key"] for model in data.get("models", [])
+                    if model.get("type") == "llm"
+                ]
+                return models
+            return []
+        except Exception as e:
+            print(f"获取模型列表失败：{e}")
+            return []
 
-        """流式生成回答"""
-        url = f"{self.base_url}/v1/chat/completions"
-
-        payload = {
-            "model": self.model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt}
-            ],
-            "temperature": 0.3,  # Lower temperature for more focused responses
-            "max_tokens": 500,
-            "stream": True
-        }
-
-        full_content = ""
-
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            async with client.stream("POST", url, json=payload) as response:
-                response.raise_for_status()
-
-                async for line in response.aiter_lines():
-                    if not line.strip():
-                        continue
-
-                    # OpenAI streaming format: "data: {...}"
-                    if line.startswith("data: "):
-                        data = line[6:].strip()
-                        if data == "[DONE]":
-                            break
-
-                        try:
-                            chunk = json.loads(data)
-                            if "choices" in chunk and len(chunk["choices"]) > 0:
-                                delta = chunk["choices"][0].get("delta", {})
-                                content = delta.get("content", "")
-                                if content:
-                                    # Extract just the answer part from Qwen3 thinking process format
-                                    content = self._extract_answer_from_qwen3_content(content)
-                                    full_content += content
-                                    if callback:
-                                        callback(content)
-                        except json.JSONDecodeError:
-                            continue
 
         return full_content
 
@@ -359,6 +384,10 @@ class LLMClient:
         self.client = self._create_client()
         self.llm_mode = self.config.llm_mode
 
+    def switch_mode(self, mode: str):
+        """切换 LLM 模式"""
+        self.llm_mode = mode
+        self.client = self._create_client()
     def _create_client(self) -> BaseLLMClient:
         """根据配置创建客户端 - 使用统一配置"""
         mode = self.config.llm_mode
@@ -366,7 +395,7 @@ class LLMClient:
         base_url = self.config.llm_base_url
         api_key = self.config.llm_api_key
 
-        if mode == "qwen":
+        if mode == "openai":
             return QwenClient(
                 api_key=api_key,
                 model=model,
@@ -381,26 +410,6 @@ class LLMClient:
             return LMStudioClient(
                 base_url=base_url,
                 model=model
-            )
-        else:
-            raise ValueError(f"未知的大模型模式：{mode}")
-        """根据配置创建客户端"""
-        mode = self.config.llm_mode
-
-        if mode == "qwen":
-            return QwenClient(
-                api_key=self.config.qwen_api_key,
-                model=self.config.qwen_model
-            )
-        elif mode == "ollama":
-            return OllamaClient(
-                base_url=self.config.ollama_url,
-                model=self.config.ollama_model
-            )
-        elif mode == "lmstudio":
-            return LMStudioClient(
-                base_url=self.config.get("llm.lmstudio.base_url", "http://localhost:1234"),
-                model=self.config.get("llm.lmstudio.model", "qwen3.5-4b")
             )
         else:
             raise ValueError(f"未知的大模型模式：{mode}")
@@ -496,13 +505,3 @@ class LLMClient:
 回答："""
 
         return await self.client.generate_stream(prompt, system_prompt, callback)
-
-    def switch_mode(self, mode: str):
-        """
-        切换大模型模式
-
-        Args:
-            mode: "qwen", "ollama", 或 "lmstudio"
-        """
-        self.config.set("llm.mode", mode)
-        self.client = self._create_client()
