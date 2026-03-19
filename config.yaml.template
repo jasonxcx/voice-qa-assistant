@@ -1,12 +1,12 @@
-# 大模型配置：所有模式都使用 mode/model/base_url/api_key
+# LLM大语言模型配置
 llm:
   # 随时覆盖的临时配置
-  mode: "qwen" # 模式选择："openai" (云端) / "ollama" (本地) / "lmstudio" (本地)
+  mode: "openai" # 模式选择："openai" (云端) / "ollama" (本地) / "lmstudio" (本地)
   model: "qwen3.5-plus"  # 模型名称
   base_url: "https://coding.dashscope.aliyuncs.com/v1"  # API 基础 URL
   api_key: "YOUR_DASHSCOPE_API_KEY"  # API Key (本地模式可留空)
   # 不会被覆盖的永久配置
-  provider: # 提供商
+  provider:
     lmstudio:
       base_url: http://localhost:1234
       model: qwen3.5-4b
@@ -14,13 +14,13 @@ llm:
       base_url: http://localhost:11434
       model: qwen2.5:7b
     openai:
-      api_key: sk-sp-000001
+      api_key: sk-xxxxxxx
       base_url: https://coding.dashscope.aliyuncs.com/v1
       model: qwen3.5-plus
 
 # 音频配置
 audio:
-  # 输入设备索引 (VB-Cable 通常为 1，可通过 python -m sounddevice 查看)
+  # 输入设备索引 (可通过 python -m sounddevice 查看)
   input_device_index: 1
   # 是否使用麦克风 (false 为系统内录)
   use_microphone: false
@@ -28,16 +28,16 @@ audio:
 # STT 配置
 stt:
   # Whisper 模型：tiny, base, small, medium, large-v2, large-v3
-  model: "medium"
+  model: base
   # 语言：zh 为中文，空为自动检测
-  language: "zh"
-  # 是否使用 GPU
-  device: "cuda"
+  language: zh
+  # 使用 GPU（cuda） 还是 CPU（cpu）
+  device: cpu
 
 # UI 配置
 ui:
   # 字幕窗口高度 (像素)
-  overlay_height: 140
+  overlay_height: 200
   # 字幕窗口宽度比例 (0.85 = 85% 屏幕宽度)
   overlay_width_ratio: 0.85
   # 字体大小

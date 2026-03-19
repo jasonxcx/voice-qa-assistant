@@ -287,12 +287,10 @@ class OverlayWindow(QWidget):
         super().__init__()
         self.config = config
         self._font_size = config.font_size
-        self._drag_bar_hover = False
         self._resizing = False
         self._resize_from_corner = None  # 记录从哪个角调节
-        self._resize_rect = QRect()
-        self._resize_handle_size = 20  # 调节区域大小
-        self._mouse_in_resize_area = False
+        self._resize_start_pos = QPoint()  # 调节开始时的鼠标位置
+        self._resize_start_geometry = (0, 0, 0, 0)  # (x, y, width, height)
         self._init_ui()
         self._setup_window_flags()
         self.setMouseTracking(True)
@@ -343,6 +341,8 @@ class OverlayWindow(QWidget):
                 border-bottom-right-radius: 12px;
             }
         """)
+        # 设置鼠标穿透，让窗口可以接收底层的鼠标事件
+        content_widget.setAttribute(Qt.WA_TransparentForMouseEvents)
 
         # 保存 content_widget 引用以便后续修改样式
         self.content_widget = content_widget
@@ -392,6 +392,13 @@ class OverlayWindow(QWidget):
 
         content_layout.addLayout(button_layout)
         main_layout.addWidget(content_widget)
+
+        # 为子控件安装事件过滤器（以便在调节区域点击时拦截事件）
+        self.hide_btn.installEventFilter(self)
+        self.font_down_btn.installEventFilter(self)
+        self.font_up_btn.installEventFilter(self)
+        self.resize_label.installEventFilter(self)
+        self.caption_history.installEventFilter(self)
 
         # 阴影效果
         shadow = QGraphicsDropShadowEffect()
@@ -453,139 +460,155 @@ class OverlayWindow(QWidget):
         cursor_pos = QCursor.pos()
         global_mouse_pos = self.mapFromGlobal(cursor_pos)
 
-        # 检查鼠标是否在拖动条区域
-        drag_bar_rect = self.drag_bar.geometry()
-        in_drag_bar = drag_bar_rect.contains(global_mouse_pos)
-
-        # 检查是否在右下角调节区域
         rect = self.rect()
-        bottom_right_rect = QRect(
-            rect.right() - self._resize_handle_size,
-            rect.bottom() - self._resize_handle_size,
-            self._resize_handle_size,
-            self._resize_handle_size
-        )
-        in_bottom_right = bottom_right_rect.contains(global_mouse_pos)
-        
-        # 检查是否在左下角调节区域
+
+        # 检查是否在左下角调节区域（增大调节区域到 40 像素）
         bottom_left_rect = QRect(
             rect.left(),
-            rect.bottom() - self._resize_handle_size,
-            self._resize_handle_size,
-            self._resize_handle_size
+            rect.bottom() - 40,
+            40,
+            40
         )
         in_bottom_left = bottom_left_rect.contains(global_mouse_pos)
-        
-        # 更新鼠标光标
-        if in_bottom_left and not self._resizing:
-            self.setCursor(Qt.SizeBDiagCursor)  # ↘ 光标 (左下角)
-        elif in_bottom_right and not self._resizing:
-            self.setCursor(Qt.SizeFDiagCursor)  # ↖ 光标 (右下角)
-        elif not in_bottom_left and not in_bottom_right and not self._resizing:
-            self.setCursor(Qt.ArrowCursor)
-        rect = self.rect()
-        resize_rect = QRect(
-            rect.right() - self._resize_handle_size,
-            rect.bottom() - self._resize_handle_size,
-            self._resize_handle_size,
-            self._resize_handle_size
+
+        # 检查是否在右下角调节区域（增大调节区域到 40 像素）
+        bottom_right_rect = QRect(
+            rect.right() - 40,
+            rect.bottom() - 40,
+            40,
+            40
         )
-        in_resize_area = resize_rect.contains(global_mouse_pos)
+        in_bottom_right = bottom_right_rect.contains(global_mouse_pos)
 
-        # 更新鼠标光标
-        if in_resize_area and not self._resizing:
-            self.setCursor(Qt.SizeFDiagCursor)
-        elif not in_resize_area and not self._resizing:
+        # 更新鼠标光标 - 优先显示 resize 光标
+        if in_bottom_left:
+            self.setCursor(Qt.SizeBDiagCursor)  # ↖ 光标 (左下角)
+        elif in_bottom_right:
+            self.setCursor(Qt.SizeFDiagCursor)  # ↘ 光标 (右下角)
+        else:
             self.setCursor(Qt.ArrowCursor)
-
-        if in_drag_bar != self._drag_bar_hover:
-            self._drag_bar_hover = in_drag_bar
-            if in_drag_bar:
-                self.drag_bar._mouse_inside = True
-                self.drag_bar._update_style()
-            else:
-                self.drag_bar._mouse_inside = False
-                self.drag_bar._update_style()
 
     def mousePressEvent(self, event):
         """鼠标按下事件 - 处理左下角和右下角调节大小"""
         if event.button() == Qt.LeftButton:
             rect = self.rect()
-            
-            # 检查左下角区域
+            local_mouse_pos = event.pos()
+
+            # 检查左下角区域（增大到 40 像素）
             bottom_left_rect = QRect(
                 rect.left(),
-                rect.bottom() - self._resize_handle_size,
-                self._resize_handle_size,
-                self._resize_handle_size
+                rect.bottom() - 40,
+                40,
+                40
             )
-            if bottom_left_rect.contains(event.pos()):
+            if bottom_left_rect.contains(local_mouse_pos):
                 self._resizing = True
                 self._resize_from_corner = "bottom_left"
+                # 记录初始位置和大小，用于计算偏移量
+                self._resize_start_pos = event.globalPos()
+                self._resize_start_geometry = (self.x(), self.y(), self.width(), self.height())
                 event.accept()
                 return
-            
-            # 检查右下角区域
+
+            # 检查右下角区域（增大到 40 像素）
             bottom_right_rect = QRect(
-                rect.right() - self._resize_handle_size,
-                rect.bottom() - self._resize_handle_size,
-                self._resize_handle_size,
-                self._resize_handle_size
+                rect.right() - 40,
+                rect.bottom() - 40,
+                40,
+                40
             )
-            if bottom_right_rect.contains(event.pos()):
+            if bottom_right_rect.contains(local_mouse_pos):
                 self._resizing = True
                 self._resize_from_corner = "bottom_right"
+                # 记录初始位置和大小，用于计算偏移量
+                self._resize_start_pos = event.globalPos()
+                self._resize_start_geometry = (self.x(), self.y(), self.width(), self.height())
                 event.accept()
                 return
+
         super().mousePressEvent(event)
-        """鼠标按下事件 - 处理右下角调节大小"""
-        if event.button() == Qt.LeftButton:
-            rect = self.rect()
-            resize_rect = QRect(
-                rect.right() - self._resize_handle_size,
-                rect.bottom() - self._resize_handle_size,
-                self._resize_handle_size,
-                self._resize_handle_size
+
+    def eventFilter(self, obj, event):
+        """事件过滤器 - 处理子控件的鼠标事件以支持 resize"""
+        if event.type() == event.MouseButtonPress and event.button() == Qt.LeftButton:
+            # 使用全局坐标检测是否在调节区域内
+            cursor_global_pos = QCursor.pos()
+            window_top_left = self.mapToGlobal(QPoint(0, 0))
+            local_mouse_pos = QPoint(
+                cursor_global_pos.x() - window_top_left.x(),
+                cursor_global_pos.y() - window_top_left.y()
             )
-            if resize_rect.contains(event.pos()):
-                self._resizing = True
-                event.accept()
-                return
-        super().mousePressEvent(event)
+            rect = self.rect()
+
+            bottom_left_rect = QRect(rect.left(), rect.bottom() - 40, 40, 40)
+            bottom_right_rect = QRect(rect.right() - 40, rect.bottom() - 40, 40, 40)
+
+            if bottom_left_rect.contains(local_mouse_pos) or bottom_right_rect.contains(local_mouse_pos):
+                # 在调节区域内，触发窗口的 resize 处理
+                # 记录初始位置和大小，用于计算偏移量
+                self._resize_start_pos = cursor_global_pos
+                self._resize_start_geometry = (self.x(), self.y(), self.width(), self.height())
+
+                if bottom_left_rect.contains(local_mouse_pos):
+                    self._resizing = True
+                    self._resize_from_corner = "bottom_left"
+                else:
+                    self._resizing = True
+                    self._resize_from_corner = "bottom_right"
+                return True  # 过滤掉事件，不让子控件处理
+
+        return super().eventFilter(obj, event)
 
     def mouseMoveEvent(self, event):
         """鼠标移动事件 - 处理窗口大小调节"""
         if self._resizing:
             rect = self.rect()
             cursor_global_pos = QCursor.pos()
-            
+
+            # 计算鼠标移动偏移量
+            delta_x = cursor_global_pos.x() - self._resize_start_pos.x()
+            delta_y = cursor_global_pos.y() - self._resize_start_pos.y()
+
+            start_x, start_y, start_width, start_height = self._resize_start_geometry
+
             if self._resize_from_corner == "bottom_left":
-                # 左下角调节：固定右边界，调整左边界和高度
-                new_left = self.mapFromGlobal(cursor_global_pos).x()
-                new_right = rect.right()
-                new_width = new_right - new_left
-                new_height = self.mapFromGlobal(cursor_global_pos).y() - rect.top()
-                
-                if new_width >= self.minimumWidth() and new_height >= self.minimumHeight():
-                    # 调整窗口大小和位置
-                    self.setGeometry(new_left, rect.top(), new_width, new_height)
-            else:
-                # 右下角调节：固定左边界，调整宽度和高度
-                new_size = self.mapFromGlobal(cursor_global_pos)
-                new_width = max(self.minimumWidth(), new_size.x())
-                new_height = max(self.minimumHeight(), new_size.y())
+                # 左下角调节：固定右上角，鼠标拖动左下角
+                # 鼠标向左移动：窗口变宽（右边界固定，左边界左移）
+                # 鼠标向右移动：窗口变窄
+                # 鼠标向上移动：窗口变矮（上边界固定，下边界上移）
+                # 鼠标向下移动：窗口变高
+
+                # 计算新的左边界和宽度
+                new_x = start_x + delta_x
+                new_width = start_width - delta_x
+
+                # 计算新的高度（上边界固定，下边界随鼠标移动）
+                new_height = start_height + delta_y
+
+                # 确保不小于最小尺寸
+                if new_width < self.minimumWidth():
+                    new_width = self.minimumWidth()
+                    new_x = start_x + start_width - new_width
+
+                if new_height < self.minimumHeight():
+                    new_height = self.minimumHeight()
+
+                # 应用新的尺寸和位置
+                self.setGeometry(new_x, start_y, new_width, new_height)
+
+            elif self._resize_from_corner == "bottom_right":
+                # 右下角调节：向左上固定，向右下扩展
+                new_width = start_width + delta_x
+                new_height = start_height + delta_y
+
+                # 确保不小于最小尺寸
+                if new_width < self.minimumWidth():
+                    new_width = self.minimumWidth()
+                if new_height < self.minimumHeight():
+                    new_height = self.minimumHeight()
+
                 self.resize(new_width, new_height)
-            
-            event.accept()
-            return
-        super().mouseMoveEvent(event)
-        """鼠标移动事件 - 处理窗口大小调节"""
-        if self._resizing:
-            # 计算新的大小
-            new_size = self.mapFromGlobal(QCursor.pos())
-            new_width = max(self.minimumWidth(), new_size.x())
-            new_height = max(self.minimumHeight(), new_size.y())
-            self.resize(new_width, new_height)
+
             event.accept()
             return
         super().mouseMoveEvent(event)
@@ -595,12 +618,6 @@ class OverlayWindow(QWidget):
         if event.button() == Qt.LeftButton:
             self._resizing = False
             self._resize_from_corner = None
-            event.accept()
-            return
-        super().mouseReleaseEvent(event)
-        """鼠标释放事件"""
-        if event.button() == Qt.LeftButton:
-            self._resizing = False
             event.accept()
             return
         super().mouseReleaseEvent(event)

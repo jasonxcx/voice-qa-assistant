@@ -1,52 +1,54 @@
-# 面试辅助工具
+# 实时问答助理
 
-实时监听会议软件音频，将面试官问题转为文字，通过大模型生成关键点回答并显示字幕。
+实时监听会议软件音频并转为文字，再通过LLM大模型生成答复并显示字幕。
 
 ## 功能特性
 
 - ✅ 系统内录：捕获腾讯会议/Zoom/Teams 音频
 - ✅ 实时 STT：Faster-Whisper GPU 加速，<3 秒延迟
 - ✅ 大模型：支持通义千问 API 和本地 Ollama/LM Studio
-- ✅ 简历注入：导入 Markdown 简历，让 AI 更懂你
+- ✅ 文本注入：导入 Markdown 文本知识库，让 AI 更懂你
 - ✅ 透明字幕：PyQt5 叠加窗口，不遮挡视频
 
 ## 快速开始
 
-### 1. 安装依赖
+### 1. 环境配置
 
 ```bash
+# （可选）配置虚拟环境，要求python > 3.10
+conda create -n py311 python=3.11 -y
+conda activate py311
+
+# 安装项目依赖
+pip install -r requirements.txt
+
 # 安装 PyTorch GPU 支持 (CUDA 11.8)
 pip install torch==2.5.1+cu118 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu118
 
 # 安装 PyTorch GPU 支持 (CUDA 12.8)
 pip install torch==2.7.1+cu128 torchaudio==2.7.1+cu128 --index-url https://download.pytorch.org/whl/cu128
-
-# 安装项目依赖
-pip install -r requirements.txt
 ```
 
 ### 2. 配置 API Key
 
-编辑 `config.yaml`:
+由 `config.yaml.template` 创建一份 `config.yaml`，并修改llm的配置
 ```yaml
 llm:
-  mode: "qwen"
-  qwen:
-    base_url: "https://coding.dashscope.aliyuncs.com/v1" # 百炼Coding Plan计划
-    api_key: "sk-xxx"  # 替换为你的 DashScope API Key
+  mode: openai
+  base_url: https://coding.dashscope.aliyuncs.com/v1 # 百炼Coding Plan计划
+  api_key: sk-xxx  # 替换为你的 DashScope API Key
+  model: qwen-max
 ```
 
 或使用本地 Ollama / LM Studio:
 ```yaml
 llm:
   mode: "ollama" # 或者 lmstudio
-  ollama:
-    base_url: "http://localhost:11434"
-    model: "qwen2.5:7b"
-
+  base_url: "http://localhost:11434"
+  model: "qwen2.5:7b"
 ```
 
-### 4. 运行程序
+### 3. 运行程序
 
 ```bash
 python app.py
@@ -59,12 +61,6 @@ python app.py
 3. **开始监听**: 点击"开始"按钮，程序开始监听音频
 4. **查看字幕**: 屏幕底部会显示转录问题和 AI 回答关键点
 
-## 快捷键
-
-- `F1`: 显示/隐藏字幕窗口
-- `F2`: 开始/暂停监听
-- `Esc`: 退出程序
-
 ## 故障排除
 
 **字幕窗口不显示:**
@@ -72,7 +68,7 @@ python app.py
 - 确认屏幕分辨率设置
 
 **无法捕获音频:**
-- 确认 VB-Cable 已正确安装
+- 确认输入设备
 - 检查 Windows 声音输入/输出设备设置
 - 确认 `config.yaml` 中的 `input_device_index` 正确
 
