@@ -44,9 +44,8 @@ class Config:
     def get(self, key: str, default: Any = None) -> Any:
         """
         获取配置值
-        
         Args:
-            key: 配置键，支持点分隔，如 "llm.qwen.api_key"
+            key: 配置键，支持点分隔，如 "llm.llm.mode"
             default: 默认值
             
         Returns:
@@ -81,6 +80,27 @@ class Config:
         
         config[keys[-1]] = value
         self.save()
+
+    def switch_llm_from_file(self, name: str):
+        """根据配置文件切换LLM"""
+        provider = self.config['llm']['provider'].get(name)
+        self.set("llm.mode", name)
+        if not provider:
+            provider = dict()
+        self.set("llm.api_key", provider.get("api_key"))
+        self.set("llm.base_url", provider.get("base_url"))
+        self.set("llm.model", provider.get("model"))
+
+    def validate(self) -> tuple[bool, str]:
+        """
+        验证配置有效性
+
+        Returns:
+            (是否有效，错误信息)
+        """
+        if not self.llm_base_url.startswith("http://localhost") and not self.llm_api_key:
+            return False, f"请配置 {self.llm_mode} 的 API Key"
+        return True, ""
     
     @property
     def llm_mode(self) -> str:
@@ -95,33 +115,14 @@ class Config:
     @property
     def llm_base_url(self) -> str:
         """获取 LLM API 基础 URL"""
-        return self.get("llm.base_url", "https://coding.dashscope.aliyuncs.com/v1")
+        return self.get("llm.base_url",
+                        "http://localhost:1234" if self.llm_mode == "lmstudio"
+                        else "https://coding.dashscope.aliyuncs.com/v1")
     
     @property
     def llm_api_key(self) -> str:
         """获取 LLM API Key"""
         return self.get("llm.api_key", "")
-
-    
-    @property
-    def qwen_api_key(self) -> str:
-        """获取通义千问 API Key"""
-        return self.get("llm.qwen.api_key", "")
-    
-    @property
-    def qwen_model(self) -> str:
-        """获取通义千问模型"""
-        return self.get("llm.qwen.model", "qwen3.5-plus")
-    
-    @property
-    def ollama_url(self) -> str:
-        """获取 Ollama 基础 URL"""
-        return self.get("llm.ollama.base_url", "http://localhost:11434")
-    
-    @property
-    def ollama_model(self) -> str:
-        """获取 Ollama 模型"""
-        return self.get("llm.ollama.model", "qwen2.5:7b")
     
     @property
     def audio_device_index(self) -> int:
@@ -181,29 +182,6 @@ class Config:
     def icon_path(self) -> str:
         """获取图标路径"""
         return self.get("ui.icon", "")
-    
-    def validate(self) -> tuple[bool, str]:
-        """
-        验证配置有效性
-        
-        Returns:
-            (是否有效，错误信息)
-        """
-        llm_mode = self.llm_mode
-        
-        if llm_mode == "qwen":
-            if not self.qwen_api_key or self.qwen_api_key == "YOUR_DASHSCOPE_API_KEY":
-                return False, "请配置通义千问 API Key"
-        elif llm_mode == "ollama":
-            # Ollama 本地运行，无需验证
-            pass
-        elif llm_mode == "lmstudio":
-            # LM Studio 本地运行，无需验证
-            pass
-        else:
-            return False, f"未知的大模型模式：{llm_mode}"
-        
-        return True, ""
 
 
 # 全局配置实例

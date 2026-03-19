@@ -93,15 +93,18 @@ class MainWindow(QMainWindow):
         
         llm_form = QFormLayout()
         self.llm_combo = QComboBox()
-        self.llm_combo.addItems(["OpenAI (云端)", "Ollama (本地)", "LM Studio (本地)"])
+        self.llm_combo.addItems(["OpenAI (云端)", "Ollama（本地）", "LM Studio (本地)"])
         self.llm_combo.currentIndexChanged.connect(self._on_llm_changed)
         llm_form.addRow("模型模式:", self.llm_combo)
         
-        # 模型名称输入框（OpenAI/Ollama 模式使用）
+        # 模型名称输入框
         self.model_name_input = QLineEdit()
         self.model_name_input.setPlaceholderText("如：qwen3.5-plus, qwen2.5:7b")
-        self.model_name_input.setToolTip("可手动输入模型名称")
         llm_form.addRow("模型名称:", self.model_name_input)
+
+        # 模型Url输入框
+        self.llm_url = QLineEdit()
+        self.model_name_input.setPlaceholderText("http://localhost")
         
         # LM Studio 模型刷新按钮和下拉框
         self.refresh_models_btn = QPushButton("🔄 刷新模型列表")
@@ -121,20 +124,6 @@ class MainWindow(QMainWindow):
         self.model_combo.setToolTip("选择或输入模型名称 (仅 LM Studio 模式)")
         self.model_combo.setEnabled(False)
         llm_form.addRow("可选模型:", self.model_combo)
-        
-        # 连接模型选择信号
-        self.model_combo.currentTextChanged.connect(self._on_model_combo_changed)
-        
-        self.llm_combo = QComboBox()
-        self.llm_combo = QComboBox()
-        self.llm_combo.addItems(["通义千问 (云端)", "Ollama (本地)", "LM Studio (本地)"])
-        self.llm_combo.currentIndexChanged.connect(self._on_llm_changed)
-        llm_form.addRow("模型模式:", self.llm_combo)
-        
-        self.ollama_url_label = QLabel("Ollama URL:")
-        self.ollama_url_input = QLineEdit()
-        self.ollama_url_input.setPlaceholderText("http://localhost:11434")
-        llm_form.addRow(self.ollama_url_label, self.ollama_url_input)
         
         llm_layout.addLayout(llm_form)
         layout.addWidget(llm_group)
@@ -334,7 +323,7 @@ class MainWindow(QMainWindow):
         """将配置同步到 UI"""
         mode_map = {"openai": 0, "ollama": 1, "lmstudio": 2}
         self.llm_combo.setCurrentIndex(mode_map.get(self.config.llm_mode, 0))
-        self.ollama_url_input.setText(self.config.ollama_url)
+        self.llm_url.setText(self.config.llm_base_url)
         self.model_name_input.setText(self.config.llm_model)
         
         # 根据当前模式设置 UI 可见性
@@ -423,32 +412,11 @@ class MainWindow(QMainWindow):
     def _on_llm_changed(self, index: int):
         """切换 LLM 模式"""
         mode_map = {0: "openai", 1: "ollama", 2: "lmstudio"}
-        mode = mode_map.get(index, "openai")
-        
-        url_map = {
-            0: "",
-            1: "http://localhost:11434",
-            2: "http://localhost:1234"
-        }
-        label_map = {
-            0: "API Key 配置 (在 config.yaml 中)",
-            1: "Ollama URL:",
-            2: "LM Studio URL:"
-        }
-        
-        # 默认模型映射
-        default_models = {
-            0: "qwen3.5-plus",
-            1: "qwen2.5:7b",
-            2: "local-model"
-        }
-        
-        self.ollama_url_input.setText(url_map.get(index, ""))
-        self.ollama_url_input.setEnabled(index != 0)
-        self.ollama_url_label.setText(label_map.get(index, "URL:"))
-        
-        # 更新模型名称
-        self.model_name_input.setText(default_models.get(index, ""))
+        self.config.switch_llm_from_file(mode_map.get(index, "openai"))
+
+        # 更新模型信息
+        self.llm_url.setText(self.config.llm_base_url)
+        self.model_name_input.setText(self.config.llm_model)
         
         # 启用/禁用 LM Studio 模型刷新按钮和下拉框
         is_lmstudio = (index == 2)
@@ -467,7 +435,7 @@ class MainWindow(QMainWindow):
             self._refresh_lmstudio_models()
         
         try:
-            self.llm_client.switch_mode(mode)
+            self.llm_client.switch_mode()
             self._update_ui_state()
         except Exception as e:
             QMessageBox.critical(self, "切换失败", str(e))
@@ -506,41 +474,6 @@ class MainWindow(QMainWindow):
             self.caption_status.setText("字幕窗口：显示中（拖动顶部灰色条移动窗口，双击隐藏）")
             self.caption_toggle_btn.setText("📑 隐藏")
     
-    def _update_config_from_ui(self):
-        """从 UI 更新配置"""
-        model_map = {0: "tiny", 1: "base", 2: "small", 3: "medium", 4: "large-v2", 5: "large-v3"}
-        stt_model = model_map.get(self.stt_model_combo.currentIndex(), "medium")
-        self.config.set("stt.model", stt_model)
-
-        # 更新 STT 设备选择
-        device_map = {0: "cpu", 1: "cuda"}
-        stt_device = device_map.get(self.stt_device_combo.currentIndex(), "cuda")
-        self.config.set("stt.local.device", stt_device)
-
-        compute_map = {0: "float32", 1: "float16", 2: "int8"}
-        compute_type = compute_map.get(self.compute_type_combo.currentIndex(), "float32")
-        self.config.set("stt.local.compute_type", compute_type)
-
-        # 安全获取音频设备索引，避免越界
-        current_index = self.audio_device_combo.currentIndex()
-        if 0 <= current_index < len(self.audio_devices):
-            device_index = self.audio_devices[current_index]['index']
-            self.config.set("audio.input_device_index", device_index)
-
-        self.config.set("llm.ollama.base_url", self.ollama_url_input.text())
-        
-        # 根据模式保存模型配置
-        if self.config.llm_mode == "lmstudio":
-            # LM Studio: 从下拉框获取模型 key
-            current_index = self.model_combo.currentIndex()
-            model_key = self.model_combo.itemData(current_index)
-            if model_key:
-                self.config.set("llm.model", model_key)
-        else:
-            # OpenAI/Ollama: 从输入框获取模型名称
-            model_name = self.model_name_input.text()
-            self.config.set("llm.model", model_name)
-    
     def _refresh_lmstudio_models(self):
         """从 LM Studio 获取模型列表"""
         if self.config.llm_mode != "lmstudio":
@@ -552,7 +485,7 @@ class MainWindow(QMainWindow):
         def fetch_models():
             try:
                 import requests
-                base_url = self.ollama_url_input.text().rstrip('/')
+                base_url = self.llm_url.text().rstrip('/')
                 if not base_url:
                     base_url = "http://localhost:1234"
                 
@@ -564,14 +497,15 @@ class MainWindow(QMainWindow):
                         model for model in data.get("models", [])
                         if model.get("type") == "llm"
                     ]
-                    from PyQt5.QtCore import QTimer
-                    QTimer.singleShot(0, lambda: self._update_model_combo(models))
+                    print(f"从LM Studio成功获取到 {len(models)} 个模型供选择")
                 else:
-                    from PyQt5.QtCore import QTimer
-                    QTimer.singleShot(0, lambda: self._update_model_combo([]))
+                    models = []
             except Exception as e:
+                print(f"从LM Studio获取模型时发生错误: {e}")
+                models = []
+            finally:
                 from PyQt5.QtCore import QTimer
-                QTimer.singleShot(0, lambda: self._update_model_combo([]))
+                QTimer.singleShot(0, lambda: self._update_model_combo(models))
         
         threading.Thread(target=fetch_models, daemon=True).start()
     
@@ -633,20 +567,6 @@ class MainWindow(QMainWindow):
         from PyQt5.QtCore import QTimer
         QTimer.singleShot(3000, lambda: self.refresh_models_btn.setText("🔄 刷新模型列表"))
     
-    def _update_model_combo(self, models: List[str]):
-        """更新模型下拉框"""
-        self.model_combo.clear()
-        if models:
-            self.model_combo.addItems(models)
-            self.refresh_models_btn.setText("✅ 已更新")
-        else:
-            self.model_combo.addItem("未找到模型（请确保 LM Studio 已启动）")
-            self.refresh_models_btn.setText("🔄 重试")
-        self.refresh_models_btn.setEnabled(True)
-        # 3 秒后恢复按钮文字
-        from PyQt5.QtCore import QTimer
-        QTimer.singleShot(3000, lambda: self.refresh_models_btn.setText("🔄 刷新模型列表"))
-    
     def _on_model_combo_changed(self, index: int):
         """模型选择变化时更新配置"""
         if self.config.llm_mode != "lmstudio":
@@ -677,29 +597,26 @@ class MainWindow(QMainWindow):
             device_index = self.audio_devices[current_index]['index']
             self.config.set("audio.input_device_index", device_index)
 
-        self.config.set("llm.ollama.base_url", self.ollama_url_input.text())
-        
         # 根据模式保存模型配置
+        self.config.set("llm." + self.config.llm_mode + ".base_url", self.llm_url.text())
         if self.config.llm_mode == "lmstudio":
             # LM Studio: 从下拉框获取模型 key
             current_index = self.model_combo.currentIndex()
             model_key = self.model_combo.itemData(current_index)
             if model_key:
-                self.config.set("llm.model", model_key)
+                self.config.set("llm." + self.config.llm_mode + ".model", model_key)
         else:
             # OpenAI/Ollama: 从输入框获取模型名称
             model_name = self.model_name_input.text()
-            self.config.set("llm.model", model_name)
+            self.config.set("llm." + self.config.llm_mode + ".model", model_name)
+
     def _update_ui_state(self):
         """更新 UI 状态"""
         # 如果模型正在加载，不更新按钮状态
         if self.is_model_loading:
             return
-        
-        is_running = self.audio_capture.is_running()
-        
 
-        if is_running:
+        if self.audio_capture.is_running():
             self.start_btn.setText("⏹ 停止监听")
             self.start_btn.setStyleSheet("""
                 QPushButton {
@@ -743,7 +660,7 @@ class MainWindow(QMainWindow):
             self.llm_combo.setEnabled(True)
         
         mode = self.config.llm_mode
-        mode_names = {"qwen": "通义千问", "ollama": "Ollama", "lmstudio": "LM Studio"}
+        mode_names = {"openai": "OpenAI", "ollama": "Ollama", "lmstudio": "LM Studio"}
         self.status_label.setText(f"● 就绪 - {mode_names.get(mode, mode)}")
         self.status_label.setStyleSheet(f"color: {STATUS_COLORS['idle']};")
     
@@ -886,14 +803,7 @@ class MainWindow(QMainWindow):
 
         # 检测 503 错误，提示用户切换 LLM
         if "503" in error_msg or "Service Unavailable" in error_msg:
-            QMessageBox.warning(self, "LLM 服务不可用",
-                f"LM Studio 服务不可用 (503 错误)。\n\n"
-                f"请确保：\n"
-                f"1. LM Studio 已启动并加载了模型\n"
-                f"2. 服务器运行在 http://localhost:1234\n\n"
-                f"或者切换到其他 LLM 模式：\n"
-                f"- 通义千问 (云端)\n"
-                f"- Ollama (本地)")
+            QMessageBox.warning(self, "LLM 服务不可用",f"LM Studio 服务不可用 (503 错误)，请切换到其他 LLM 模式")
 
     async def _generate_and_show_answer(self, question: str):
         """生成并显示回答"""

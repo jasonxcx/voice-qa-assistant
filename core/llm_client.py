@@ -2,30 +2,13 @@
 大模型客户端 - 支持 Qwen API 和 Ollama/LM Studio
 """
 import json
-import httpx
-from typing import Optional, Callable, AsyncGenerator, List
-from abc import ABC, abstractmethod
 import logging
+from typing import Optional, Callable, AsyncGenerator, List
 from openai import OpenAI
 
 
-class BaseLLMClient(ABC):
+class BaseLLMClient:
     """大模型客户端基类"""
-
-    @abstractmethod
-    async def generate(self, prompt: str, system_prompt: str = "") -> str:
-        """生成回答"""
-        pass
-
-    @abstractmethod
-    async def generate_stream(self, prompt: str, system_prompt: str = "", 
-                              callback: Optional[Callable[[str], None]] = None) -> str:
-        """流式生成回答"""
-        pass
-
-
-class QwenClient(BaseLLMClient):
-    """通义千问 API 客户端"""
 
     def __init__(self, api_key: str, model: str = "qwen3.5-plus", base_url: str = "https://coding.dashscope.aliyuncs.com/v1"):
         self.api_key = api_key
@@ -74,99 +57,6 @@ class QwenClient(BaseLLMClient):
                     callback(content)
         
         return full_content
-
-
-class OllamaClient(BaseLLMClient):
-    """Ollama API 客户端（使用 OpenAI 兼容接口）"""
-
-    def __init__(self, base_url: str, model: str):
-        self.base_url = base_url
-        self.model = model
-        self.client = OpenAI(base_url=base_url, api_key="ollama")
-
-    async def generate(self, prompt: str, system_prompt: str = "") -> str:
-        """使用 OpenAI 库同步生成回答"""
-        messages = []
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-        messages.append({"role": "user", "content": prompt})
-        
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            stream=False,
-            max_tokens=500
-        )
-        return response.choices[0].message.content
-
-    async def generate_stream(self, prompt: str, system_prompt: str = "",
-                              callback: Optional[Callable[[str], None]] = None) -> str:
-        """使用 OpenAI 库流式生成回答"""
-        messages = []
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-        messages.append({"role": "user", "content": prompt})
-        
-        stream = self.client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            stream=True,
-            max_tokens=500
-        )
-        
-        full_content = ""
-        for chunk in stream:
-            if chunk.choices and chunk.choices[0].delta.content:
-                content = chunk.choices[0].delta.content
-                full_content += content
-                if callback:
-                    callback(content)
-        
-        return full_content
-
-
-
-    async def generate_stream(self, prompt: str, system_prompt: str = "",
-                              callback: Optional[Callable[[str], None]] = None) -> str:
-        """流式生成回答"""
-        url = f"{self.base_url}/api/generate"
-
-        payload = {
-            "model": self.model,
-            "prompt": prompt,
-            "system": system_prompt,
-            "stream": True,
-            "options": {
-                "num_predict": 500,
-                "temperature": 0.7
-            }
-        }
-
-        full_content = ""
-
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            async with client.stream("POST", url, json=payload) as response:
-                response.raise_for_status()
-
-                async for line in response.aiter_lines():
-                    if not line.strip():
-                        continue
-
-                    try:
-                        chunk = json.loads(line)
-                        content = chunk.get("response", "")
-                        if content:
-                            full_content += content
-                            if callback:
-                                callback(content)
-
-                        if chunk.get("done", False):
-                            break
-                    except json.JSONDecodeError:
-                        continue
-
-        return full_content
-
 
 class LMStudioClient(BaseLLMClient):
     """LM Studio 客户端 (使用 OpenAI 库)"""
@@ -382,37 +272,20 @@ class LLMClient:
     def __init__(self, config):
         self.config = config
         self.client = self._create_client()
-        self.llm_mode = self.config.llm_mode
 
-    def switch_mode(self, mode: str):
+    def switch_mode(self):
         """切换 LLM 模式"""
-        self.llm_mode = mode
         self.client = self._create_client()
     def _create_client(self) -> BaseLLMClient:
         """根据配置创建客户端 - 使用统一配置"""
-        mode = self.config.llm_mode
         model = self.config.llm_model
         base_url = self.config.llm_base_url
         api_key = self.config.llm_api_key
-
-        if mode == "openai":
-            return QwenClient(
-                api_key=api_key,
-                model=model,
-                base_url=base_url
-            )
-        elif mode == "ollama":
-            return OllamaClient(
-                base_url=base_url,
-                model=model
-            )
-        elif mode == "lmstudio":
-            return LMStudioClient(
-                base_url=base_url,
-                model=model
-            )
-        else:
-            raise ValueError(f"未知的大模型模式：{mode}")
+        return BaseLLMClient(
+            api_key=api_key,
+            model=model,
+            base_url=base_url
+        )
 
     def build_system_prompt(self, resume_text: str = "") -> str:
         """

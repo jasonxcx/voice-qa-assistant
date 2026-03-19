@@ -1,10 +1,22 @@
 # 大模型配置：所有模式都使用 mode/model/base_url/api_key
 llm:
-  # 模式选择："qwen" (云端) / "ollama" (本地) / "lmstudio" (本地)
-  mode: "qwen"
+  # 随时覆盖的临时配置
+  mode: "qwen" # 模式选择："openai" (云端) / "ollama" (本地) / "lmstudio" (本地)
   model: "qwen3.5-plus"  # 模型名称
   base_url: "https://coding.dashscope.aliyuncs.com/v1"  # API 基础 URL
   api_key: "YOUR_DASHSCOPE_API_KEY"  # API Key (本地模式可留空)
+  # 不会被覆盖的永久配置
+  provider: # 提供商
+    lmstudio:
+      base_url: http://localhost:1234
+      model: qwen3.5-4b
+    ollama:
+      base_url: http://localhost:11434
+      model: qwen2.5:7b
+    openai:
+      api_key: sk-sp-000001
+      base_url: https://coding.dashscope.aliyuncs.com/v1
+      model: qwen3.5-plus
 
 # 音频配置
 audio:
