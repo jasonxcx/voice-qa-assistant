@@ -22,14 +22,6 @@ class AudioCapture(QObject):
     recording_stopped = pyqtSignal()       # 停止录音
     error_occurred = pyqtSignal(str)       # 错误发生
     volume_update = pyqtSignal(float)      # 音量更新 (0.0 - 1.0)
-    model_loading_started = pyqtSignal()   # 模型开始加载
-    model_loaded = pyqtSignal()            # 模型加载完成
-    transcription_ready = pyqtSignal(str)  # 转录文本就绪
-    real_time_update = pyqtSignal(str)     # 实时转录更新
-    recording_started = pyqtSignal()       # 开始录音
-    recording_stopped = pyqtSignal()       # 停止录音
-    error_occurred = pyqtSignal(str)       # 错误发生
-    volume_update = pyqtSignal(float)      # 音量更新 (0.0 - 1.0)
 
     def __init__(self, config):
         super().__init__()
@@ -61,34 +53,14 @@ class AudioCapture(QObject):
                 compute_type = 'float32'  # CPU 使用 float32
             else:
                 compute_type = 'int8'  # 其他设备使用 int8
-
-            # 发射模型加载开始信号
-            self.model_loading_started.emit()
             
             log_system(f"加载 Faster-Whisper 模型：{model_name} (device={device}, compute_type={compute_type})", logging.INFO)
-            print(f"[AudioCapture] 加载 STT 模型：{model_name} (device={device})...", flush=True)
-
             self.stt_model = WhisperModel(
                 model_size_or_path=model_name,
                 device=device,
                 compute_type=compute_type,
             )
-            
-            # 发射模型加载完成信号
-            self.model_loaded.emit()
-
             log_system("Faster-Whisper 模型加载成功", logging.INFO)
-            print(f"[AudioCapture] STT 模型加载成功", flush=True)
-            print(f"[AudioCapture] 加载 STT 模型：{model_name} (device={device})...", flush=True)
-
-            self.stt_model = WhisperModel(
-                model_size_or_path=model_name,
-                device=device,
-                compute_type=compute_type,
-            )
-
-            log_system("Faster-Whisper 模型加载成功", logging.INFO)
-            print(f"[AudioCapture] STT 模型加载成功", flush=True)
 
         except Exception as e:
             log_system(f"加载 STT 模型失败：{e}", logging.ERROR)
@@ -188,8 +160,8 @@ class AudioCapture(QObject):
 
                     if is_speech:
                         # 检测到声音，重置静音计时器
-                        silence_start = None
                         if not speech_detected:
+                            silence_start = None
                             speech_detected = True
                             print(f"[AudioCapture] >>> 检测到语音 (volume={volume:.5f})", flush=True)
                         # 添加到缓冲区
@@ -237,11 +209,8 @@ class AudioCapture(QObject):
                     log_system(f"音频读取错误：{e}", logging.WARNING)
                     time.sleep(0.1)
 
-            # 停止时转录剩余缓冲区
-            if audio_buffer:
-                print(f"[AudioCapture] 转录剩余缓冲区...", flush=True)
-                self._transcribe_buffer(audio_buffer, sample_rate, channels=channels)
-
+            # 停止时不转录剩余缓冲区以避免卡顿，并清空缓冲区
+            audio_buffer = []
             stream.close()
             p.terminate()
 
@@ -309,14 +278,6 @@ class AudioCapture(QObject):
                 temperature=0.0,   # 固定温度，避免随机性
                 vad_filter=False,  # 禁用 VAD，避免过滤掉有效语音
                 condition_on_previous_text=True,  # 保持上下文一致性
-            )
-            segments, info = self.stt_model.transcribe(
-                audio_float,
-                language='zh',
-                beam_size=10,      # 增加 beam size 提高准确率
-                best_of=10,        # 增加 best_of
-                temperature=0.0,   # 固定温度，避免随机性
-                vad_filter=False,  # 禁用 VAD，避免过滤掉有效语音
             )
 
             # 收集转录结果

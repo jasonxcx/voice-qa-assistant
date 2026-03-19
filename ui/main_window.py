@@ -325,7 +325,7 @@ class MainWindow(QMainWindow):
         self.llm_combo.setCurrentIndex(mode_map.get(self.config.llm_mode, 0))
         self.llm_url.setText(self.config.llm_base_url)
         self.model_name_input.setText(self.config.llm_model)
-        
+
         # 根据当前模式设置 UI 可见性
         is_lmstudio = (self.config.llm_mode == "lmstudio")
         self.model_name_input.setVisible(not is_lmstudio)
@@ -351,26 +351,6 @@ class MainWindow(QMainWindow):
                 break
     
     def _connect_signals(self):
-        """连接信号"""
-        self.audio_capture.transcription_ready.connect(self._on_transcription_ready)
-        self.audio_capture.real_time_update.connect(self._on_realtime_update)
-        self.audio_capture.recording_started.connect(self._on_recording_started)
-        self.audio_capture.recording_stopped.connect(self._on_recording_stopped)
-        self.audio_capture.error_occurred.connect(self._on_error)
-        self.audio_capture.volume_update.connect(self._on_volume_update)
-        self.audio_capture.model_loading_started.connect(self._on_model_loading_started)
-        self.audio_capture.model_loaded.connect(self._on_model_loaded)
-
-        # 连接 overlay 窗口的显示/隐藏信号
-        self.overlay.visibilityChanged.connect(self._on_overlay_visibility_changed)
-
-        self.volume_timer = QTimer()
-        self.volume_timer.timeout.connect(self._update_volume_display)
-        self.volume_timer.start(100)
-
-        self.caption_queue = []
-        self.current_volume = 0.0
-        self.is_model_loading = False  # 模型加载状态
         """连接信号"""
         self.audio_capture.transcription_ready.connect(self._on_transcription_ready)
         self.audio_capture.real_time_update.connect(self._on_realtime_update)
@@ -577,7 +557,7 @@ class MainWindow(QMainWindow):
             self.config.set("llm.model", model_key)
     
     def _update_config_from_ui(self):
-        """从 UI 更新配置"""
+        """从 UI 更新配置 - 更新临时配置和 provider 永久配置"""
         model_map = {0: "tiny", 1: "base", 2: "small", 3: "medium", 4: "large-v2", 5: "large-v3"}
         stt_model = model_map.get(self.stt_model_combo.currentIndex(), "medium")
         self.config.set("stt.model", stt_model)
@@ -597,18 +577,26 @@ class MainWindow(QMainWindow):
             device_index = self.audio_devices[current_index]['index']
             self.config.set("audio.input_device_index", device_index)
 
-        # 根据模式保存模型配置
-        self.config.set("llm." + self.config.llm_mode + ".base_url", self.llm_url.text())
-        if self.config.llm_mode == "lmstudio":
-            # LM Studio: 从下拉框获取模型 key
-            current_index = self.model_combo.currentIndex()
-            model_key = self.model_combo.itemData(current_index)
+        # 更新临时配置
+        self.config.set("llm.base_url", self.llm_url.text())
+        self.config.set("llm.model", self.model_name_input.text())
+
+        # 同时更新 provider 永久配置
+        mode = self.config.llm_mode
+        self.config.update_provider_config(mode, "base_url", self.llm_url.text())
+
+        # LM Studio 模式下从下拉框获取模型
+        if mode == "lmstudio":
+            model_index = self.model_combo.currentIndex()
+            model_key = self.model_combo.itemData(model_index)
             if model_key:
-                self.config.set("llm." + self.config.llm_mode + ".model", model_key)
+                self.config.set("llm.model", model_key)
+                self.config.update_provider_config(mode, "model", model_key)
+            else:
+                self.config.update_provider_config(mode, "model", self.model_name_input.text())
         else:
             # OpenAI/Ollama: 从输入框获取模型名称
-            model_name = self.model_name_input.text()
-            self.config.set("llm." + self.config.llm_mode + ".model", model_name)
+            self.config.update_provider_config(mode, "model", self.model_name_input.text())
 
     def _update_ui_state(self):
         """更新 UI 状态"""
@@ -776,16 +764,16 @@ class MainWindow(QMainWindow):
 
         if item_type == "question":
             # 不显示转录问题，直接显示"正在生成回答..."
-            # 使用独立线程运行异步 LLM 调用
-            threading.Thread(target=self._run_generate_answer, args=(text,), daemon=True).start()
+            # 使用独立线程运行异步 LLM 调用（流式生成）
+            threading.Thread(target=self._run_generate_answer_stream, args=(text,), daemon=True).start()
 
-    def _run_generate_answer(self, question: str):
-        """在独立线程中运行异步 LLM 生成"""
+    def _run_generate_answer_stream(self, question: str):
+        """在独立线程中运行异步 LLM 流式生成"""
         try:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
-                loop.run_until_complete(self._generate_and_show_answer(question))
+                loop.run_until_complete(self._generate_and_show_answer_stream(question))
             finally:
                 loop.close()
         except Exception as e:
@@ -803,25 +791,38 @@ class MainWindow(QMainWindow):
 
         # 检测 503 错误，提示用户切换 LLM
         if "503" in error_msg or "Service Unavailable" in error_msg:
-            QMessageBox.warning(self, "LLM 服务不可用",f"LM Studio 服务不可用 (503 错误)，请切换到其他 LLM 模式")
+            QMessageBox.warning(self, "LLM 服务不可用", f"LM Studio 服务不可用 (503 错误)，请切换到其他 LLM 模式")
 
-    async def _generate_and_show_answer(self, question: str):
-        """生成并显示回答"""
+    async def _generate_and_show_answer_stream(self, question: str):
+        """流式生成并显示回答"""
         try:
-            log_system(f"收到问题：{question[:100]}", logging.INFO)
-            answer = await self.llm_client.generate_answer(question, self.resume_data)
+            full_answer = ""
 
-            log_llm(question, answer, self.config.llm_mode)
-            log_system(f"生成回答：{answer[:100]}", logging.INFO)
+            def on_token(token: str):
+                """每个 token 生成时的回调"""
+                nonlocal full_answer
+                full_answer += token
+                # 使用 QTimer 确保 UI 更新在主线程中执行
+                from PyQt5.QtCore import QTimer
+                QTimer.singleShot(0, lambda: self._update_caption_streaming(full_answer))
 
-            # 使用 QTimer.singleShot 确保 UI 更新在主线程中执行
+            full_answer = await self.llm_client.generate_answer_stream(question, self.resume_data, on_token)
+
+            log_llm(question, full_answer, self.config.llm_mode)
+            log_system(f"生成回答：{full_answer[:100]}", logging.INFO)
+
+            # 完成后更新日志和状态
             from PyQt5.QtCore import QTimer
-            QTimer.singleShot(0, lambda: self._update_ui_with_answer(answer))
+            QTimer.singleShot(0, lambda: self._update_ui_with_answer(full_answer))
         except Exception as e:
             error_msg = f"生成失败：{str(e)}"
             log_system(error_msg, logging.ERROR)
             from PyQt5.QtCore import QTimer
             QTimer.singleShot(0, lambda: self._on_llm_error(error_msg))
+
+    def _update_caption_streaming(self, current_text: str):
+        """流式更新字幕"""
+        self.overlay.update_caption(current_text, "answer")
 
     def _update_ui_with_answer(self, answer: str):
         """在主线程中更新 UI 显示回答"""
