@@ -24,5 +24,3 @@ numpy>=1.24.0
 
 # 日志
 colorama>=0.4.6  # 彩色日志（Windows）
-torch==2.7.1+cu128
-torchaudio==2.7.1+cu128

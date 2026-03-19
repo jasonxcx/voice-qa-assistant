@@ -88,6 +88,22 @@ class Config:
         return self.get("llm.mode", "qwen")
     
     @property
+    def llm_model(self) -> str:
+        """获取 LLM 模型"""
+        return self.get("llm.model", "qwen3.5-plus")
+    
+    @property
+    def llm_base_url(self) -> str:
+        """获取 LLM API 基础 URL"""
+        return self.get("llm.base_url", "https://coding.dashscope.aliyuncs.com/v1")
+    
+    @property
+    def llm_api_key(self) -> str:
+        """获取 LLM API Key"""
+        return self.get("llm.api_key", "")
+
+    
+    @property
     def qwen_api_key(self) -> str:
         """获取通义千问 API Key"""
         return self.get("llm.qwen.api_key", "")
@@ -151,6 +167,20 @@ class Config:
     def font_size(self) -> int:
         """获取字体大小"""
         return self.get("ui.font_size", 28)
+    
+    @property
+    def icon_path(self) -> str:
+        """获取图标路径"""
+        return self.get("ui.icon", "")
+    @property
+    def font_size(self) -> int:
+        """获取字体大小"""
+        return self.get("ui.font_size", 28)
+    
+    @property
+    def icon_path(self) -> str:
+        """获取图标路径"""
+        return self.get("ui.icon", "")
     
     def validate(self) -> tuple[bool, str]:
         """

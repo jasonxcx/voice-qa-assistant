@@ -1,24 +1,10 @@
-# 面试辅助工具配置文件
-
-# 大模型配置
+# 大模型配置：所有模式都使用 mode/model/base_url/api_key
 llm:
-  # 模式选择："qwen" 或 "ollama" 或 "lmstudio"
+  # 模式选择："qwen" (云端) / "ollama" (本地) / "lmstudio" (本地)
   mode: "qwen"
-  
-  # 通义千问 API 配置
-  qwen:
-    api_key: "YOUR_DASHSCOPE_API_KEY"  # ← 替换为你的 API Key
-    model: "qwen-max"
-  
-  # Ollama 配置
-  ollama:
-    base_url: "http://localhost:11434"
-    model: "qwen2.5:7b"
-  
-  # LM Studio 配置
-  lmstudio:
-    base_url: "http://localhost:1234"
-    model: "local-model"
+  model: "qwen3.5-plus"  # 模型名称
+  base_url: "https://coding.dashscope.aliyuncs.com/v1"  # API 基础 URL
+  api_key: "YOUR_DASHSCOPE_API_KEY"  # API Key (本地模式可留空)
 
 # 音频配置
 audio:
@@ -29,8 +15,7 @@ audio:
 
 # STT 配置
 stt:
-  # Whisper 模型：tiny, base, small, medium, large-v2
-  # RTX 5060Ti 16GB 推荐使用 medium 或 small
+  # Whisper 模型：tiny, base, small, medium, large-v2, large-v3
   model: "medium"
   # 语言：zh 为中文，空为自动检测
   language: "zh"

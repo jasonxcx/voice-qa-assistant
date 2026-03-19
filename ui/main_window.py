@@ -7,6 +7,7 @@ from PyQt5.QtWidgets import (
     QComboBox, QLineEdit, QMessageBox, QFormLayout,
     QTextEdit, QSplitter
 )
+from PyQt5.QtGui import QIcon
 from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
 from typing import Optional, Dict, Any, List
 import sounddevice as sd
@@ -35,6 +36,7 @@ class MainWindow(QMainWindow):
         
         self.resume_data: Optional[Dict[str, Any]] = None
         self.audio_devices: List[Dict] = []
+        self.is_model_loading = False
         
         self._init_ui()
         self._connect_signals()
@@ -46,7 +48,13 @@ class MainWindow(QMainWindow):
     
     def _init_ui(self):
         """初始化 UI"""
-        self.setWindowTitle("面试辅助工具")
+
+        
+        # 从配置读取图标路径，如果配置为空或文件不存在则不设置图标
+        icon_path = self.config.icon_path
+        if icon_path and os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
+        
         self.setMinimumSize(500, 550)
         self.setStyleSheet(MAIN_WINDOW_STYLESHEET)
         
@@ -294,7 +302,7 @@ class MainWindow(QMainWindow):
         self.llm_combo.setCurrentIndex(mode_map.get(self.config.llm_mode, 0))
         self.ollama_url_input.setText(self.config.ollama_url)
 
-        model_map = {"tiny": 0, "base": 1, "small": 2, "medium": 3, "large-v2": 4}
+        model_map = {"tiny": 0, "base": 1, "small": 2, "medium": 3, "large-v2": 4, "large-v3": 5}
         self.stt_model_combo.setCurrentIndex(model_map.get(self.config.stt_model, 3))
 
         # 同步 STT 设备选择
@@ -311,6 +319,26 @@ class MainWindow(QMainWindow):
                 break
     
     def _connect_signals(self):
+        """连接信号"""
+        self.audio_capture.transcription_ready.connect(self._on_transcription_ready)
+        self.audio_capture.real_time_update.connect(self._on_realtime_update)
+        self.audio_capture.recording_started.connect(self._on_recording_started)
+        self.audio_capture.recording_stopped.connect(self._on_recording_stopped)
+        self.audio_capture.error_occurred.connect(self._on_error)
+        self.audio_capture.volume_update.connect(self._on_volume_update)
+        self.audio_capture.model_loading_started.connect(self._on_model_loading_started)
+        self.audio_capture.model_loaded.connect(self._on_model_loaded)
+
+        # 连接 overlay 窗口的显示/隐藏信号
+        self.overlay.visibilityChanged.connect(self._on_overlay_visibility_changed)
+
+        self.volume_timer = QTimer()
+        self.volume_timer.timeout.connect(self._update_volume_display)
+        self.volume_timer.start(100)
+
+        self.caption_queue = []
+        self.current_volume = 0.0
+        self.is_model_loading = False  # 模型加载状态
         """连接信号"""
         self.audio_capture.transcription_ready.connect(self._on_transcription_ready)
         self.audio_capture.real_time_update.connect(self._on_realtime_update)
@@ -411,7 +439,7 @@ class MainWindow(QMainWindow):
     
     def _update_config_from_ui(self):
         """从 UI 更新配置"""
-        model_map = {0: "tiny", 1: "base", 2: "small", 3: "medium", 4: "large-v2"}
+        model_map = {0: "tiny", 1: "base", 2: "small", 3: "medium", 4: "large-v2", 5: "large-v3"}
         stt_model = model_map.get(self.stt_model_combo.currentIndex(), "medium")
         self.config.set("stt.model", stt_model)
 
@@ -424,16 +452,23 @@ class MainWindow(QMainWindow):
         compute_type = compute_map.get(self.compute_type_combo.currentIndex(), "float32")
         self.config.set("stt.local.compute_type", compute_type)
 
-        if self.audio_device_combo.currentIndex() < len(self.audio_devices):
-            device_index = self.audio_devices[self.audio_device_combo.currentIndex()]['index']
+        # 安全获取音频设备索引，避免越界
+        current_index = self.audio_device_combo.currentIndex()
+        if 0 <= current_index < len(self.audio_devices):
+            device_index = self.audio_devices[current_index]['index']
             self.config.set("audio.input_device_index", device_index)
 
         self.config.set("llm.ollama.base_url", self.ollama_url_input.text())
     
     def _update_ui_state(self):
         """更新 UI 状态"""
+        # 如果模型正在加载，不更新按钮状态
+        if self.is_model_loading:
+            return
+        
         is_running = self.audio_capture.is_running()
         
+
         if is_running:
             self.start_btn.setText("⏹ 停止监听")
             self.start_btn.setStyleSheet("""
@@ -510,6 +545,33 @@ class MainWindow(QMainWindow):
         self.status_label.setText("● 监听中...")
         self.status_label.setStyleSheet(f"color: {STATUS_COLORS['listening']};")
     
+    def _on_model_loading_started(self):
+        """模型开始加载 - 显示准备中状态"""
+        self.is_model_loading = True
+        self.start_btn.setText("⏳ 准备中...")
+        self.start_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #9E9E9E;
+                color: #BDBDBD;
+                border: none;
+                border-radius: 6px;
+                padding: 8px 20px;
+                font-size: 15px;
+                font-weight: bold;
+            }
+            QPushButton:disabled {
+                background-color: #BDBDBD;
+                color: #757575;
+            }
+        """)
+        self.start_btn.setEnabled(False)
+        self.status_label.setText("● 模型加载中...")
+        self.status_label.setStyleSheet("color: #9E9E9E;")
+    
+    def _on_model_loaded(self):
+        """模型加载完成 - 更新为监听中状态"""
+        self.is_model_loading = False
+        self._update_ui_state()  # 恢复正常状态
     def _on_recording_stopped(self):
         """录音停止"""
         self._update_ui_state()

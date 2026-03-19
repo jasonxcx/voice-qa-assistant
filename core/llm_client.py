@@ -33,154 +33,48 @@ class QwenClient(BaseLLMClient):
         self.base_url = base_url
 
     async def generate(self, prompt: str, system_prompt: str = "") -> str:
-        """同步生成回答"""
-        def callback(new_text):
-            # 作为回调函数，更新response
-            print(new_text, end="", flush=True, sep="")
-        response = OpenAI(
-            api_key=self.api_key,
-            base_url=self.base_url
-        ).chat.completions.create(
-            model=self.model,
-            messages=[{"role": "user", "content": prompt}],
-            stream=True,
-            reasoning_effort="none",
-            max_completion_tokens=200
-        )
-        full_response = ""
-        for chunk in response:
-            if not chunk.choices:
-                continue
-            if chunk.choices[0].delta.content:
-                content = chunk.choices[0].delta.content
-                full_response += content
-                # callback(content)
-            # if chunk.choices[0].delta.reasoning_content:
-            #     reasoning = chunk.choices[0].delta.reasoning_content
-            #     full_response += reasoning
-            #     callback(reasoning)
-        return full_response
-        # headers = {
-        #     "Authorization": f"Bearer {self.api_key}",
-        #     "Content-Type": "application/json"
-        # }
-        # messages = []
-        # if system_prompt:
-        #     messages.append({"role": "system", "content": system_prompt})
-        # messages.append({"role": "user", "content": prompt})
-        #
-        # payload = {
-        #     "model": self.model,
-        #     "input": {"messages": messages},
-        #     "parameters": {
-        #         "max_tokens": 500,
-        #         "temperature": 0.7
-        #     }
-        # }
-        # try:
-        #     async with httpx.AsyncClient(timeout=30.0) as client:
-        #         response = await client.post(self.base_url, headers=headers, json=payload)
-        #
-        #         if response.status_code == 401:
-        #             raise Exception("API Key 无效或已过期 - 请在 config.yaml 中检查通义千问 API Key 配置")
-        #         elif response.status_code == 429:
-        #             raise Exception("请求频率超限 - 请稍后重试")
-        #         elif response.status_code >= 500:
-        #             raise Exception(f"服务器错误 ({response.status_code}) - 请稍后重试")
-        #
-        #         response.raise_for_status()
-        #         result = response.json()
-        #
-        #         # 检查返回的错误
-        #         if "output" not in result or "text" not in result.get("output", {}):
-        #             if "message" in result:
-        #                 raise Exception(f"API 返回错误：{result['message']}")
-        #             raise Exception(f"API 返回格式异常：{result}")
-        #
-        #         return result["output"]["text"]
-        # except httpx.ConnectError as e:
-        #     raise Exception(f"无法连接到通义千问服务：{str(e)}")
-        # except Exception as e:
-        #     if "API Key" in str(e) or "401" in str(e):
-        #         raise
-        #     raise Exception(f"通义千问请求失败：{str(e)}")
-
-    async def generate_stream(self, prompt: str, system_prompt: str = "",
-                              callback: Optional[Callable[[str], None]] = None) -> str:
-        """流式生成回答"""
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-            "X-DashScope-SSE": "enable"
-        }
-
+        """使用 OpenAI 库同步生成回答"""
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
+        
+        client = OpenAI(api_key=self.api_key, base_url=self.base_url)
+        response = client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            stream=False,
+            max_completion_tokens=500
+        )
+        return response.choices[0].message.content
 
-        payload = {
-            "model": self.model,
-            "input": {"messages": messages},
-            "parameters": {
-                "max_tokens": 500,
-                "temperature": 0.7
-            }
-        }
 
+    async def generate_stream(self, prompt: str, system_prompt: str = "",
+                              callback: Optional[Callable[[str], None]] = None) -> str:
+        """使用 OpenAI 库流式生成回答"""
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+        
+        client = OpenAI(api_key=self.api_key, base_url=self.base_url)
+        stream = client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            stream=True,
+            max_completion_tokens=500
+        )
+        
         full_content = ""
-
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            async with client.stream("POST", self.base_url, headers=headers, json=payload) as response:
-                response.raise_for_status()
-
-                async for line in response.aiter_lines():
-                    if line.startswith("data:"):
-                        data = line[5:].strip()
-                        if data == "[DONE]":
-                            break
-
-                        try:
-                            chunk = json.loads(data)
-                            content = chunk.get("output", {}).get("text", "")
-                            if content:
-                                full_content = content
-                                if callback:
-                                    callback(content)
-                        except json.JSONDecodeError:
-                            continue
-
+        for chunk in stream:
+            if chunk.choices and chunk.choices[0].delta.content:
+                content = chunk.choices[0].delta.content
+                full_content += content
+                if callback:
+                    callback(content)
+        
         return full_content
 
-
-class OllamaClient(BaseLLMClient):
-    """Ollama 客户端"""
-
-    def __init__(self, base_url: str, model: str = "qwen2.5:7b"):
-        self.base_url = base_url.rstrip('/')
-        self.model = model
-
-    async def generate(self, prompt: str, system_prompt: str = "") -> str:
-        """同步生成回答"""
-        url = f"{self.base_url}/api/generate"
-
-        payload = {
-            "model": self.model,
-            "prompt": prompt,
-            "system": system_prompt,
-            "stream": False,
-            "options": {
-                "num_predict": 500,
-                "temperature": 0.7
-            }
-        }
-
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(url, json=payload)
-            response.raise_for_status()
-            result = response.json()
-
-            return result.get("response", "")
 
     async def generate_stream(self, prompt: str, system_prompt: str = "",
                               callback: Optional[Callable[[str], None]] = None) -> str:
@@ -225,51 +119,71 @@ class OllamaClient(BaseLLMClient):
 
 
 class LMStudioClient(BaseLLMClient):
-    """LM Studio 客户端 (使用 OpenAI 兼容 API)"""
+    """LM Studio 客户端 (使用 OpenAI 库)"""
 
     def __init__(self, base_url: str, model: str = "local-model"):
         self.base_url = base_url.rstrip('/')
         self.model = model
+        # 使用 OpenAI 库
+        self.client = OpenAI(
+            api_key="not-needed",  # LM Studio 不需要 API Key
+            base_url=f"{self.base_url}/v1"
+        )
 
     async def generate(self, prompt: str, system_prompt: str = "", callback=None) -> str:
-        """同步生成回答"""
-        url = f"{self.base_url}/v1/chat/completions"
-        payload = {
-            "model": self.model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt}
-            ],
-            "temperature": 0.3,  # Lower temperature for more focused responses
-            "max_tokens": 500,
-            "stream": False
-        }
+        """使用 OpenAI 库同步生成回答"""
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(url, json=payload)
-                response.raise_for_status()
-                result = response.json()
-
-                # Extract content from OpenAI response format
-                if "choices" in result and len(result["choices"]) > 0:
-                    message = result["choices"][0].get("message", {})
-                    content = message.get("content", "")
-                    # Extract just the answer part from Qwen3 thinking process format
-                    if content:
-                        content = self._extract_answer_from_qwen3_content(content)
-                    return content
-                return ""
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 503:
-                raise Exception(f"LM Studio 服务不可用 (503 错误) - 请确保 LM Studio 已启动并加载了模型")
-            raise Exception(f"LM Studio 请求失败 ({e.response.status_code}): {str(e)}")
-        except httpx.ConnectError as e:
-            raise Exception(f"无法连接到 LM Studio ({self.base_url}) - 请确保服务已启动")
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.3,
+                max_tokens=500,
+                stream=False
+            )
+            content = response.choices[0].message.content
+            if content:
+                return self._extract_answer_from_qwen3_content(content)
+            return ""
         except Exception as e:
+            if "503" in str(e):
+                raise Exception("LM Studio 服务不可用 (503 错误) - 请确保 LM Studio 已启动并加载了模型")
             raise Exception(f"LM Studio 请求失败：{str(e)}")
+
 
     async def generate_stream(self, prompt: str, system_prompt: str = "",
                               callback: Optional[Callable[[str], None]] = None) -> str:
+        """使用 OpenAI 库流式生成回答"""
+        try:
+            stream = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.3,
+                max_tokens=500,
+                stream=True
+            )
+            
+            full_content = ""
+            for chunk in stream:
+                if chunk.choices and chunk.choices[0].delta.content:
+                    content = chunk.choices[0].delta.content
+                    full_content += content
+                    # 提取答案并回调
+                    extracted = self._extract_answer_from_qwen3_content(content)
+                    if callback and extracted:
+                        callback(extracted)
+            
+            return full_content
+        except Exception as e:
+            if "503" in str(e):
+                raise Exception("LM Studio 服务不可用 (503 错误) - 请确保 LM Studio 已启动并加载了模型")
+            raise Exception(f"LM Studio 请求失败：{str(e)}")
+
         """流式生成回答"""
         url = f"{self.base_url}/v1/chat/completions"
 
@@ -340,7 +254,7 @@ class LMStudioClient(BaseLLMClient):
                 return answer_part
         
         # Method 2: Look for the thinking process marker and take everything after it ends
-        thinking_marker = "\Thinking Process:"
+        thinking_marker = r"\Thinking Process:"
         if thinking_marker in content:
             # Find the end of the thinking process
             # Look for a pattern that indicates the thinking is done
@@ -446,6 +360,30 @@ class LLMClient:
         self.llm_mode = self.config.llm_mode
 
     def _create_client(self) -> BaseLLMClient:
+        """根据配置创建客户端 - 使用统一配置"""
+        mode = self.config.llm_mode
+        model = self.config.llm_model
+        base_url = self.config.llm_base_url
+        api_key = self.config.llm_api_key
+
+        if mode == "qwen":
+            return QwenClient(
+                api_key=api_key,
+                model=model,
+                base_url=base_url
+            )
+        elif mode == "ollama":
+            return OllamaClient(
+                base_url=base_url,
+                model=model
+            )
+        elif mode == "lmstudio":
+            return LMStudioClient(
+                base_url=base_url,
+                model=model
+            )
+        else:
+            raise ValueError(f"未知的大模型模式：{mode}")
         """根据配置创建客户端"""
         mode = self.config.llm_mode
 

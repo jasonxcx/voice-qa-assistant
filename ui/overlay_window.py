@@ -324,6 +324,7 @@ class OverlayWindow(QWidget):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
+
         # 1. 顶部拖动条
         self.drag_bar = DragBar(self)
         self.drag_bar.double_clicked.connect(self._on_drag_bar_double_click)
@@ -332,14 +333,19 @@ class OverlayWindow(QWidget):
         # 2. 内容区域 - 添加边框以便可见
         content_widget = QWidget()
         content_widget.setObjectName("contentWidget")
+        # 初始完全透明
         content_widget.setStyleSheet("""
             QWidget#contentWidget {
-                background-color: rgba(30, 30, 30, 200);
-                border: 1px solid rgba(255, 255, 255, 64);
+                background-color: transparent;
+                border: 1px solid transparent;
                 border-bottom-left-radius: 12px;
                 border-bottom-right-radius: 12px;
             }
         """)
+
+        # 保存 content_widget 引用以便后续修改样式
+        self.content_widget = content_widget
+
 
         content_layout = QVBoxLayout(content_widget)
         content_layout.setContentsMargins(10, 10, 10, 10)
@@ -567,6 +573,32 @@ class OverlayWindow(QWidget):
         if event.type() == QEvent.WindowStateChange:
             self.visibilityChanged.emit(self.isVisible())
         super().changeEvent(event)
+
+    def enterEvent(self, event):
+        """鼠标移入 - 显示背景色"""
+        if hasattr(self, 'content_widget'):
+            self.content_widget.setStyleSheet("""
+                QWidget#contentWidget {
+                    background-color: rgba(30, 30, 30, 200);
+                    border: 1px solid rgba(255, 255, 255, 64);
+                    border-bottom-left-radius: 12px;
+                    border-bottom-right-radius: 12px;
+                }
+            """)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        """鼠标移出 - 恢复透明"""
+        if hasattr(self, 'content_widget'):
+            self.content_widget.setStyleSheet("""
+                QWidget#contentWidget {
+                    background-color: transparent;
+                    border: 1px solid transparent;
+                    border-bottom-left-radius: 12px;
+                    border-bottom-right-radius: 12px;
+                }
+            """)
+        super().leaveEvent(event)
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_F12:

@@ -22,6 +22,14 @@ class AudioCapture(QObject):
     recording_stopped = pyqtSignal()       # 停止录音
     error_occurred = pyqtSignal(str)       # 错误发生
     volume_update = pyqtSignal(float)      # 音量更新 (0.0 - 1.0)
+    model_loading_started = pyqtSignal()   # 模型开始加载
+    model_loaded = pyqtSignal()            # 模型加载完成
+    transcription_ready = pyqtSignal(str)  # 转录文本就绪
+    real_time_update = pyqtSignal(str)     # 实时转录更新
+    recording_started = pyqtSignal()       # 开始录音
+    recording_stopped = pyqtSignal()       # 停止录音
+    error_occurred = pyqtSignal(str)       # 错误发生
+    volume_update = pyqtSignal(float)      # 音量更新 (0.0 - 1.0)
 
     def __init__(self, config):
         super().__init__()
@@ -54,7 +62,23 @@ class AudioCapture(QObject):
             else:
                 compute_type = 'int8'  # 其他设备使用 int8
 
+            # 发射模型加载开始信号
+            self.model_loading_started.emit()
+            
             log_system(f"加载 Faster-Whisper 模型：{model_name} (device={device}, compute_type={compute_type})", logging.INFO)
+            print(f"[AudioCapture] 加载 STT 模型：{model_name} (device={device})...", flush=True)
+
+            self.stt_model = WhisperModel(
+                model_size_or_path=model_name,
+                device=device,
+                compute_type=compute_type,
+            )
+            
+            # 发射模型加载完成信号
+            self.model_loaded.emit()
+
+            log_system("Faster-Whisper 模型加载成功", logging.INFO)
+            print(f"[AudioCapture] STT 模型加载成功", flush=True)
             print(f"[AudioCapture] 加载 STT 模型：{model_name} (device={device})...", flush=True)
 
             self.stt_model = WhisperModel(
@@ -274,6 +298,18 @@ class AudioCapture(QObject):
                 self._save_debug_audio(audio_buffer, sample_rate, 0, "_debug", channels)
 
             # 转录配置 - 优化参数以提高准确率
+            # 添加面试场景提示词和 IT 技术热词
+            segments, info = self.stt_model.transcribe(
+                audio_float,
+                language='zh',
+                initial_prompt="面试场景，包含技术术语如 Java, Python, MySQL, Redis, Kafka, Docker, Kubernetes, 微服务，分布式系统，算法，数据结构等。",  # 预设提示词
+                hotwords="Java Python MySQL Redis Kafka Docker Kubernetes Spring TensorFlow PyTorch 微服务 分布式 算法 数据结构 多线程 并发 API SDK HTTP TCP IP",  # 技术热词
+                beam_size=10,      # 增加 beam size 提高准确率
+                best_of=10,        # 增加 best_of
+                temperature=0.0,   # 固定温度，避免随机性
+                vad_filter=False,  # 禁用 VAD，避免过滤掉有效语音
+                condition_on_previous_text=True,  # 保持上下文一致性
+            )
             segments, info = self.stt_model.transcribe(
                 audio_float,
                 language='zh',
