@@ -79,6 +79,8 @@ class LLMClient:
         """根据配置创建客户端 - 使用统一配置"""
         model = self.config.llm_model
         base_url = self.config.llm_base_url
+        if self.config.llm_mode == "lmstudio":
+            base_url += "/v1"
         api_key = self.config.llm_api_key
         return BaseLLMClient(
             api_key=api_key,

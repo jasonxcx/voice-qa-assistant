@@ -482,11 +482,6 @@ class MainWindow(QMainWindow):
             if not is_valid:
                 QMessageBox.warning(self, "配置错误", error_msg)
                 return
-
-            # todo 字幕窗口会在点击"开始监听"按钮，模型加载完成后显示
-            self.overlay.show()
-            self.caption_status.setText("字幕窗口：显示中（拖动顶部灰色条移动窗口，双击隐藏）")
-            self.caption_toggle_btn.setText("📑 隐藏")
             
             self.audio_capture.start()
             self._update_ui_state()
@@ -881,6 +876,10 @@ class MainWindow(QMainWindow):
         self.is_model_loading = False
         log_system("模型加载完成", logging.INFO)
         self._update_ui_state()  # 恢复正常状态
+        # 字幕窗口会在点击"开始监听"按钮，模型加载完成后显示
+        self.overlay.show()
+        self.caption_status.setText("字幕窗口：显示中（拖动顶部灰色条移动窗口，双击隐藏）")
+        self.caption_toggle_btn.setText("📑 隐藏")
         # 启用 overlay 的监听按钮（模型已加载）
         if hasattr(self, "audio_capture") and self.audio_capture:
             self.overlay.set_listen_button_enabled(True)

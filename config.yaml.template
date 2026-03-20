@@ -18,27 +18,22 @@ llm:
       base_url: https://coding.dashscope.aliyuncs.com/v1
       model: qwen3.5-plus
 
-# 音频配置
-audio:
-  # 输入设备索引 (可通过 python -m sounddevice 查看)
-  input_device_index: 1
-  # 是否使用麦克风 (false 为系统内录)
-  use_microphone: false
-
 # STT 配置
 stt:
-  # Whisper 模型：tiny, base, small, medium, large-v2, large-v3
-  model: base
-  # 语言：zh 为中文，空为自动检测
-  language: zh
-  # 使用 GPU（cuda） 还是 CPU（cpu）
-  device: cpu
+  local:
+    compute_type: float16
+    # 使用 GPU（cuda） 还是 CPU（cpu）
+    device: cuda
+    # 语言：zh 为中文，空为自动检测
+    language: zh
+    # Whisper 模型：tiny, base, small, medium, large-v2, large-v3
+    model: medium
 
 # UI 配置
 ui:
   # 字幕窗口高度 (像素)
-  overlay_height: 200
+  overlay_height: 500
   # 字幕窗口宽度比例 (0.85 = 85% 屏幕宽度)
   overlay_width_ratio: 0.85
   # 字体大小
-  font_size: 28
+  font_size: 12
