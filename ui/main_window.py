@@ -558,52 +558,120 @@ class MainWindow(QMainWindow):
         print(f"[Debug] 清空下拉框", flush=True)
         self.model_combo.clear()
         print(f"[Debug] 下拉框已清空", flush=True)
-        
-        if models:
-            for model in models:
-                key = model.get("key", "unknown")
-                display_name = model.get("display_name", key)
-                
-                # 构建提示信息
-                tooltip_parts = []
-                
-                # 上下文长度
-                max_context = model.get("max_context_length")
-                if max_context:
-                    tooltip_parts.append(f"最大上下文：{max_context:,} tokens")
-                
-                # 已加载实例信息
-                loaded_instances = model.get("loaded_instances", [])
-                if loaded_instances:
-                    for instance in loaded_instances:
-                        config = instance.get("config", {})
-                        context_length = config.get("context_length")
-                        if context_length:
-                            tooltip_parts.append(f"运行时上下文：{context_length:,} tokens")
-                            break
-                
-                # 模型大小
-                size_bytes = model.get("size_bytes")
-                if size_bytes:
-                    size_gb = size_bytes / (1024 ** 3)
-                    tooltip_parts.append(f"模型大小：{size_gb:.2f} GB")
-                
-                # 量化信息
-                quantization = model.get("quantization", {})
-                if quantization:
-                    name = quantization.get("name")
-                    bits = quantization.get("bits_per_weight")
-                    if name and bits:
-                        tooltip_parts.append(f"量化：{name} ({bits}bit)")
-                
-                tooltip = "\n".join(tooltip_parts) if tooltip_parts else "无详细信息"
-                
-                # 添加模型到下拉框
-                self.model_combo.addItem(f"{display_name} ({key})", key)
-                # 设置提示
-                self.model_combo.setItemData(self.model_combo.count() - 1, tooltip, Qt.ToolTipRole)
-        else:
-            self.model_combo.addItem("未找到模型（请确保 LM Studio 已启动）", "")
+
+        # 获取当前配置的模型名称
+        current_config_model = self.config.llm_model
+        print(f"[Debug] 当前配置的模型: {current_config_model}", flush=True)
+
+        # 分离有 loaded_instances 和没有的模型
+        loaded_models = []
+        not_loaded_models = []
+        for model in models:
+            if model.get("loaded_instances"):
+                loaded_models.append(model)
+            else:
+                not_loaded_models.append(model)
+
+        print(f"[Debug] 有加载实例的模型: {len(loaded_models)}, 未加载的模型: {len(not_loaded_models)}", flush=True)
+
+        # 构建模型列表：有 loaded_instances 的在前
+        ordered_models = loaded_models + not_loaded_models
+
+        # 用于匹配的字典
+        model_map = {}  # key -> model
+        display_name_map = {}  # display_name -> model
+        for model in ordered_models:
+            key = model.get("key", "unknown")
+            display_name = model.get("display_name", key)
+            model_map[key] = model
+            if display_name not in display_name_map:
+                display_name_map[display_name] = model
+
+        # 设置下拉框项
+        selected_index = -1
+        for model in ordered_models:
+            key = model.get("key", "unknown")
+            display_name = model.get("display_name", key)
+            loaded_instances = model.get("loaded_instances", [])
+
+            # 构建提示信息
+            tooltip_parts = []
+
+            # 上下文长度
+            max_context = model.get("max_context_length")
+            if max_context:
+                tooltip_parts.append(f"最大上下文：{max_context:,} tokens")
+
+            # 已加载实例信息
+            if loaded_instances:
+                for instance in loaded_instances:
+                    config = instance.get("config", {})
+                    context_length = config.get("context_length")
+                    if context_length:
+                        tooltip_parts.append(f"运行时上下文：{context_length:,} tokens")
+                        break
+
+            # 模型大小
+            size_bytes = model.get("size_bytes")
+            if size_bytes:
+                size_gb = size_bytes / (1024 ** 3)
+                tooltip_parts.append(f"模型大小：{size_gb:.2f} GB")
+
+            # 量化信息
+            quantization = model.get("quantization", {})
+            if quantization:
+                name = quantization.get("name")
+                bits = quantization.get("bits_per_weight")
+                if name and bits:
+                    tooltip_parts.append(f"量化：{name} ({bits}bit)")
+
+            tooltip = "\n".join(tooltip_parts) if tooltip_parts else "无详细信息"
+
+            # 设置显示文本（有 loaded_instances 的加标记）
+            if loaded_instances:
+                display_text = f"{display_name} ({key}) ✓"
+            else:
+                display_text = f"{display_name} ({key})"
+
+            # 添加模型到下拉框
+            index = self.model_combo.count()
+            self.model_combo.addItem(display_text, key)
+            self.model_combo.setItemData(index, tooltip, Qt.ToolTipRole)
+
+            # 设置有 loaded_instances 的模型颜色
+            if loaded_instances:
+                from PyQt5.QtGui import QColor, QBrush
+                self.model_combo.setItemData(index, QBrush(QColor("#4CAF50")), Qt.ForegroundRole)
+                self.model_combo.setItemData(index, "有加载实例的模型", Qt.ToolTipRole)
+
+            # 检查是否匹配当前配置的模型
+            if selected_index == -1:
+                # 优先匹配 key，其次匹配 display_name
+                if key == current_config_model or display_name == current_config_model:
+                    selected_index = index
+                    print(f"[Debug] 匹配到配置模型: {display_text}", flush=True)
+                # 如果没有匹配，尝试匹配不带版本号的模型名
+                elif current_config_model in key or current_config_model in display_name:
+                    selected_index = index
+                    print(f"[Debug] 部分匹配配置模型: {display_text}", flush=True)
+
+        # 设置选中项
+        if selected_index >= 0:
+            self.model_combo.setCurrentIndex(selected_index)
+            print(f"[Debug] 选中索引: {selected_index}", flush=True)
+        elif self.model_combo.count() > 0:
+            # 如果没有匹配到，选中第一个有 loaded_instances 的模型
+            for i in range(self.model_combo.count()):
+                item_data = self.model_combo.itemData(i, Qt.ToolTipRole)
+                if item_data and "有加载实例" in str(item_data):
+                    self.model_combo.setCurrentIndex(i)
+                    print(f"[Debug] 默认选中第一个有加载实例的模型，索引: {i}", flush=True)
+                    break
+            else:
+                # 如果没有有加载实例的模型，选中第一个
+                self.model_combo.setCurrentIndex(0)
+                print(f"[Debug] 默认选中第一个模型，索引: 0", flush=True)
+
         self.refresh_models_btn.setText("🔄 刷新模型列表")
         print(f"[Debug] 设置刷新按钮文本为重试", flush=True)
 
@@ -617,7 +685,7 @@ class MainWindow(QMainWindow):
         print(f"[Debug] 启用 overlay 的监听按钮", flush=True)
         self.overlay.set_listen_button_enabled(True)
         print(f"[Debug] 启用 overlay 的监听按钮完成", flush=True)
-        
+
         from PyQt5.QtCore import QTimer
         QTimer.singleShot(3000, lambda: self.refresh_models_btn.setText("🔄 刷新模型列表"))
 
