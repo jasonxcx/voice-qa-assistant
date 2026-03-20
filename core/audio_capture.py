@@ -22,6 +22,7 @@ class AudioCapture(QObject):
     recording_stopped = pyqtSignal()       # 停止录音
     error_occurred = pyqtSignal(str)       # 错误发生
     volume_update = pyqtSignal(float)      # 音量更新 (0.0 - 1.0)
+    transcription_completed = pyqtSignal(str)  # 手动转录完成
 
     def __init__(self, config):
         super().__init__()
@@ -31,6 +32,8 @@ class AudioCapture(QObject):
         self._volume_thread: Optional[threading.Thread] = None
         self._running = False
         self._monitoring = False
+        self._recording = False  # 手动控制录音状态
+        self._manual_mode = False  # 手动模式：True=手动控制转录，False=自动检测
         self._audio_queue = []  # 音频缓冲区
         self._max_queue_size = 30  # 最多保存 30 秒的音频块
 
@@ -83,6 +86,45 @@ class AudioCapture(QObject):
 
         if self._volume_thread and self._volume_thread.is_alive():
             self._volume_thread.join(timeout=1.0)
+
+    def start_recording(self):
+        """手动模式：开始录音"""
+        if self._recording:
+            return
+        self._recording = True
+        print(f"[AudioCapture] 手动模式：开始录音 (时间: {time.strftime('%H:%M:%S')})", flush=True)
+        log_system("手动模式：开始录音", logging.INFO)
+
+    def stop_recording(self):
+        """手动模式：停止录音"""
+        if not self._recording:
+            return
+        self._recording = False
+        buffer_info = "N/A"  # _audio_buffer 是 _run 中的局部变量，这里无法直接访问
+        print(f"[AudioCapture] 手动模式：停止录音 (时间: {time.strftime('%H:%M:%S')}, buffer={buffer_info})", flush=True)
+        log_system("手动模式：停止录音", logging.INFO)
+        # 停止录音后自动触发转录
+        self.transcribe_now()
+        # 等待一小段时间确保转录完成
+        import time
+        time.sleep(0.5)
+        print("[AudioCapture] 手动模式：停止录音完成", flush=True)
+
+    def transcribe_now(self):
+        """手动模式：立即转录当前缓冲区"""
+        print("[AudioCapture] 手动模式：触发转录", flush=True)
+        self._transcribing_manual = True
+
+    def set_manual_mode(self, enabled: bool):
+        """设置手动模式"""
+        self._manual_mode = enabled
+        mode_str = "手动" if enabled else "自动"
+        print(f"[AudioCapture] 转录模式：{mode_str}", flush=True)
+        log_system(f"转录模式：{mode_str}", logging.INFO)
+
+    def is_recording(self) -> bool:
+        """是否正在录音"""
+        return self._recording
 
     def start(self):
         """在独立线程中启动音频捕获"""
@@ -142,6 +184,7 @@ class AudioCapture(QObject):
             transcription_count = 0
             last_volume_log = 0
             min_audio_duration = 0.5  # 最小录音时长（秒）- 降低以捕获短句
+            self._transcribing_manual = False  # 手动转录标志
 
             # 主录音循环
             while self._running:
@@ -153,52 +196,80 @@ class AudioCapture(QObject):
                     # 计算音量（使用 RMS 更准确）
                     audio_float = audio_data.astype(np.float32) / 32768.0
                     volume = np.sqrt(np.mean(audio_float ** 2))  # RMS 音量
-
-                    # 检测是否有人声（简单的音量阈值）
-                    is_speech = volume > silence_threshold
                     current_time = time.time()
 
-                    if is_speech:
-                        # 检测到声音，重置静音计时器
-                        if not speech_detected:
-                            silence_start = None
-                            speech_detected = True
-                            print(f"[AudioCapture] >>> 检测到语音 (volume={volume:.5f})", flush=True)
-                        # 添加到缓冲区
-                        audio_buffer.append(audio_data)
-                        # 限制缓冲区大小（约 30 秒）
-                        if len(audio_buffer) > 300:
-                            audio_buffer.pop(0)
+                    # 检查是否有手动转录请求
+                    if self._manual_mode and self._transcribing_manual:
+                        self._transcribing_manual = False  # 重置标志
+                        if len(audio_buffer) > 0:
+                            # 执行转录
+                            audio_duration = len(audio_buffer) / (sample_rate / 1024)
+                            if audio_duration >= min_audio_duration:
+                                transcription_count += 1
+                                print(f"[AudioCapture] 手动转录 #{transcription_count} ({audio_duration:.1f}秒)...", flush=True)
+                                # 复用自动转录的逻辑
+                                # 转录在独立线程中执行，避免阻塞循环
+                                args = (audio_buffer.copy(), sample_rate, 2)
+                                t = threading.Thread(target=self._transcribe_buffer, args=args, daemon=True)
+                                t.start()
+                                audio_buffer = []  # 清空缓冲区
+                        continue  # 跳过当前循环
+
+                    # 手动模式：只在 _recording 为 True 时收集音频
+                    if self._manual_mode:
+                        if self._recording:
+                            # 手动录音中，收集音频
+                            audio_buffer.append(audio_data)
+                            # 手动模式不限制缓冲区大小，记录从开始到停止的所有音频
+                            # 注意：长时间录音可能导致内存占用较高
+                        # 手动模式不下自动转录，由外部调用 transcribe_now() 触发
                     else:
-                        # 静音
-                        if speech_detected:
-                            if silence_start is None:
-                                silence_start = time.time()
-                                print(f"[AudioCapture] 静音开始...", flush=True)
-                            elif time.time() - silence_start > silence_duration_threshold:
-                                # 静音时间足够长，触发转录
-                                audio_duration = len(audio_buffer) / (sample_rate / 1024)  # 估算时长
-                                if audio_duration >= min_audio_duration:
-                                    transcription_count += 1
-                                    print(f"[AudioCapture] >>> 转录 #{transcription_count} ({audio_duration:.1f}秒)...", flush=True)
+                        # 自动模式：使用语音/静音检测
+                        is_speech = volume > silence_threshold
 
-                                    self._transcribe_buffer(audio_buffer, sample_rate, channels=channels)
-                                else:
-                                    print(f"[AudioCapture] 音频太短 ({audio_duration:.1f}秒 < {min_audio_duration}秒)，跳过", flush=True)
-
-                                # 无论是否转录，都清空缓冲区并开始新的检测
-                                audio_buffer = []
-                                speech_detected = False
+                        if is_speech:
+                            # 检测到声音，重置静音计时器
+                            if not speech_detected:
                                 silence_start = None
-                                print(f"[AudioCapture] 等待音频输入...", flush=True)
+                                speech_detected = True
+                                print(f"[AudioCapture] >>> 检测到语音 (volume={volume:.5f})", flush=True)
+                            # 添加到缓冲区
+                            audio_buffer.append(audio_data)
+                            # 限制缓冲区大小（约 30 秒）
+                            if len(audio_buffer) > 300:
+                                audio_buffer.pop(0)
                         else:
-                            # 保持缓冲区有少量静音数据用于边界检测
-                            if len(audio_buffer) < 50:
-                                audio_buffer.append(audio_data)
+                            # 静音
+                            if speech_detected:
+                                if silence_start is None:
+                                    silence_start = time.time()
+                                    print(f"[AudioCapture] 静音开始...", flush=True)
+                                elif time.time() - silence_start > silence_duration_threshold:
+                                    # 静音时间足够长，触发转录
+                                    audio_duration = len(audio_buffer) / (sample_rate / 1024)  # 估算时长
+                                    if audio_duration >= min_audio_duration:
+                                        transcription_count += 1
+                                        print(f"[AudioCapture] >>> 转录 #{transcription_count} ({audio_duration:.1f}秒)...", flush=True)
+
+                                        self._transcribe_buffer(audio_buffer, sample_rate, channels=channels)
+                                    else:
+                                        print(f"[AudioCapture] 音频太短 ({audio_duration:.1f}秒 < {min_audio_duration}秒)，跳过", flush=True)
+
+                                    # 无论是否转录，都清空缓冲区并开始新的检测
+                                    audio_buffer = []
+                                    speech_detected = False
+                                    silence_start = None
+                                    print(f"[AudioCapture] 等待音频输入...", flush=True)
+                            else:
+                                # 保持缓冲区有少量静音数据用于边界检测
+                                if len(audio_buffer) < 50:
+                                    audio_buffer.append(audio_data)
 
                     # 定期打印调试信息（每 10 秒）
                     if current_time - last_log_time > 10.0:
-                        print(f"[AudioCapture] 监听中... (buffer={len(audio_buffer)}, speech={speech_detected}, 已转录={transcription_count})", flush=True)
+                        mode_str = "手动" if self._manual_mode else "自动"
+                        rec_str = "录音中" if self._recording else "待机"
+                        print(f"[AudioCapture] {mode_str}模式：{rec_str} (buffer={len(audio_buffer)}, 已转录={transcription_count})", flush=True)
                         last_log_time = current_time
 
                     # 定期发送音量更新

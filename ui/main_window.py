@@ -39,12 +39,18 @@ class MainWindow(QMainWindow):
         self.is_model_loading = False
         
         self._init_ui()
+        print("[Debug] _init_ui 完成", flush=True)
         self._connect_signals()
+        print("[Debug] _connect_signals 完成", flush=True)
         self._load_audio_devices()
+        print("[Debug] _load_audio_devices 完成", flush=True)
         self._sync_ui_with_config()
-        
+        print("[Debug] _sync_ui_with_config 完成", flush=True)
+
         # 启动音量监控（独立于录音）
         self.audio_capture.start_monitoring()
+        self._initialized = True
+        print("[Debug] MainWindow 初始化完成", flush=True)
     
     def _init_ui(self):
         """初始化 UI"""
@@ -185,7 +191,7 @@ class MainWindow(QMainWindow):
         button_layout = QHBoxLayout()
         button_layout.setSpacing(8)
         
-        self.start_btn = QPushButton("▶ 开始监听")
+        self.start_btn = QPushButton("▶ 加载模型")
         self.start_btn.setMinimumHeight(45)
         self.start_btn.setStyleSheet("""
             QPushButton {
@@ -239,7 +245,7 @@ class MainWindow(QMainWindow):
         layout.addLayout(button_layout)
 
         # 字幕状态
-        self.caption_status = QLabel("字幕窗口：未显示（点击开始监听后显示，拖动顶部灰色条移动窗口，F12 显示/隐藏）")
+        self.caption_status = QLabel("字幕窗口：未显示（点击后显示/隐藏，拖动顶部灰色条移动窗口）")
         self.caption_status.setStyleSheet("color: #9AA0A6; font-size: 11px;")
         layout.addWidget(self.caption_status)
 
@@ -321,18 +327,38 @@ class MainWindow(QMainWindow):
     
     def _sync_ui_with_config(self):
         """将配置同步到 UI"""
+        print(f"[Debug] _sync_ui_with_config 开始, config.llm_mode={self.config.llm_mode}", flush=True)
         mode_map = {"openai": 0, "ollama": 1, "lmstudio": 2}
+        # 阻止信号触发，避免在初始化时调用 _refresh_lmstudio_models
+        self.llm_combo.blockSignals(True)
         self.llm_combo.setCurrentIndex(mode_map.get(self.config.llm_mode, 0))
+        self.llm_combo.blockSignals(False)
+
         self.llm_url.setText(self.config.llm_base_url)
         self.model_name_input.setText(self.config.llm_model)
 
         # 根据当前模式设置 UI 可见性
         is_lmstudio = (self.config.llm_mode == "lmstudio")
+        print(f"[Debug] is_lmstudio={is_lmstudio}", flush=True)
         self.model_name_input.setVisible(not is_lmstudio)
         self.model_combo.setVisible(is_lmstudio)
         self.refresh_models_btn.setVisible(is_lmstudio)
         self.model_combo.setEnabled(is_lmstudio)
         self.refresh_models_btn.setEnabled(is_lmstudio)
+
+        # 如果是 LM Studio 模式，在事件循环启动后刷新模型列表
+        if is_lmstudio:
+            from PyQt5.QtCore import QTimer
+            QTimer.singleShot(1000, self._refresh_lmstudio_models)
+            # LM Studio 模式等待模型刷新完成后再启用按钮
+        else:
+            # OpenAI/Ollama 模式模型立即可用，直接启用按钮
+            print("[Debug] 非 LM Studio 模式，直接启用按钮", flush=True)
+            print(f"[Debug] self.overlay = {self.overlay}", flush=True)
+            if self.overlay:
+                print(f"[Debug] self.overlay.listen_btn = {self.overlay.listen_btn}", flush=True)
+                self.overlay.set_listen_button_enabled(True)
+                print(f"[Debug] listen_btn.isEnabled() = {self.overlay.listen_btn.isEnabled()}", flush=True)
 
         model_map = {"tiny": 0, "base": 1, "small": 2, "medium": 3, "large-v2": 4, "large-v3": 5}
         self.stt_model_combo.setCurrentIndex(model_map.get(self.config.stt_model, 3))
@@ -349,7 +375,7 @@ class MainWindow(QMainWindow):
             if dev['index'] == self.config.audio_device_index:
                 self.audio_device_combo.setCurrentIndex(idx)
                 break
-    
+
     def _connect_signals(self):
         """连接信号"""
         self.audio_capture.transcription_ready.connect(self._on_transcription_ready)
@@ -361,6 +387,10 @@ class MainWindow(QMainWindow):
 
         # 连接 overlay 窗口的显示/隐藏信号
         self.overlay.visibilityChanged.connect(self._on_overlay_visibility_changed)
+        
+        # 连接 overlay 的监听控制信号
+        self.overlay.listeningStarted.connect(self._on_overlay_listening_started)
+        self.overlay.listeningStopped.connect(self._on_overlay_listening_stopped)
 
         self.volume_timer = QTimer()
         self.volume_timer.timeout.connect(self._update_volume_display)
@@ -410,8 +440,9 @@ class MainWindow(QMainWindow):
         self.model_combo.setEnabled(is_lmstudio)
         self.refresh_models_btn.setEnabled(is_lmstudio)
         
-        # 切换到 LM Studio 模式时自动刷新模型列表
-        if is_lmstudio:
+        # 切换到 LM Studio 模式时自动刷新模型列表（仅在用户手动切换时）
+        # 初始化时的刷新在 _sync_ui_with_config 中处理
+        if is_lmstudio and hasattr(self, '_initialized'):
             self._refresh_lmstudio_models()
         
         try:
@@ -455,42 +486,80 @@ class MainWindow(QMainWindow):
             self.caption_toggle_btn.setText("📑 隐藏")
     
     def _refresh_lmstudio_models(self):
-        """从 LM Studio 获取模型列表"""
+        """从 LM Studio 获取模型列表（使用/api/v1/models 接口）"""
         if self.config.llm_mode != "lmstudio":
             return
-        
+
+        print("[Debug] _refresh_lmstudio_models 开始")
         self.refresh_models_btn.setText("⏳ 获取中...")
         self.refresh_models_btn.setEnabled(False)
-        
+
         def fetch_models():
+            models = []  # 初始化 models 变量
             try:
                 import requests
                 base_url = self.llm_url.text().rstrip('/')
                 if not base_url:
                     base_url = "http://localhost:1234"
-                
+
+                print(f"[Debug] 请求 LM Studio API: {base_url}/api/v1/models")
+                # 使用 LM Studio 的/api/v1/models 接口获取详细信息
                 response = requests.get(f"{base_url}/api/v1/models", timeout=5)
+                print(f"[Debug] 响应状态码：{response.status_code}")
+
                 if response.status_code == 200:
                     data = response.json()
-                    # 提取 LLM 类型模型（保留完整信息）
-                    models = [
-                        model for model in data.get("models", [])
-                        if model.get("type") == "llm"
-                    ]
-                    print(f"从LM Studio成功获取到 {len(models)} 个模型供选择")
-                else:
+                    print(f"[Debug] 响应数据 keys: {data.keys()}")
+                    # LM Studio 返回格式：{"models": [{"type": "llm", "key": "...", "display_name": "...", ...}, ...]}
+                    models_data = data.get("models", [])
+                    print(f"[Debug] models_data 数量：{len(models_data)}")
+                    # 过滤 LLM 类型并转换为统一格式（保留 loaded_instances 用于获取 context_length）
                     models = []
+                    for model in models_data:
+                        if model.get("type") == "llm":
+                            models.append({
+                                "key": model.get("key", "unknown"),
+                                "display_name": model.get("display_name", model.get("key", "unknown")),
+                                "max_context_length": model.get("max_context_length"),
+                                "size_bytes": model.get("size_bytes"),
+                                "quantization": model.get("quantization", {}),
+                                "architecture": model.get("architecture"),
+                                "loaded_instances": model.get("loaded_instances", []),  # 保留 loaded_instances
+                            })
+                    print(f"从 LM Studio 成功获取到 {len(models)} 个模型供选择")
+                else:
+                    print(f"从 LM Studio 获取模型失败，状态码：{response.status_code}")
             except Exception as e:
-                print(f"从LM Studio获取模型时发生错误: {e}")
-                models = []
+                print(f"从 LM Studio 获取模型时发生错误：{e}")
+                import traceback
+                traceback.print_exc()
             finally:
+                print(f"[Debug] finally 块，models 数量={len(models)}")
+                print(f"[Debug] 调用 _update_model_combo (models={len(models)})")
+                # 直接更新 UI（在主线程中）
+                self._pending_models = models
+                # 使用callLater 风格的方式
                 from PyQt5.QtCore import QTimer
-                QTimer.singleShot(0, lambda: self._update_model_combo(models))
-        
+                timer = QTimer()
+                timer.timeout.connect(self._apply_model_combo_update)
+                timer.setSingleShot(True)
+                timer.start(0)
+                # 保持 timer 引用，防止被 GC
+                self._update_timer = timer
+
+        print("[Debug] 启动线程")
         threading.Thread(target=fetch_models, daemon=True).start()
+
     
+    def _apply_model_combo_update(self):
+        """应用模型列表更新（从实例变量读取）"""
+        models = getattr(self, '_pending_models', [])
+        print(f"[Debug] _apply_model_combo_update 开始，models={len(models)}")
+        self._update_model_combo(models)
+
     def _update_model_combo(self, models: List[Dict]):
         """更新模型下拉框（带详细信息）"""
+        print(f"[Debug] _update_model_combo 开始，models={len(models)}")
         self.model_combo.clear()
         
         if models:
@@ -542,10 +611,38 @@ class MainWindow(QMainWindow):
             self.model_combo.addItem("未找到模型（请确保 LM Studio 已启动）", "")
             self.refresh_models_btn.setText("🔄 重试")
         
+        print(f"[Debug] _update_model_combo 完成，设置了 {len(models)} 个模型")
         self.refresh_models_btn.setEnabled(True)
+        
+        # 模型加载完成，启用 overlay 的监听按钮
+        self.overlay.set_listen_button_enabled(True)
         
         from PyQt5.QtCore import QTimer
         QTimer.singleShot(3000, lambda: self.refresh_models_btn.setText("🔄 刷新模型列表"))
+
+    def _update_model_combo_simple(self, models: List[Dict]):
+        """更新模型下拉框（简化版，用于 LM Studio）"""
+        self.model_combo.clear()
+
+        if models:
+            for model in models:
+                key = model.get("key", "unknown")
+                display_name = model.get("display_name", key)
+                self.model_combo.addItem(display_name, key)
+            self.refresh_models_btn.setText("✅ 已更新")
+        else:
+            self.model_combo.addItem("未找到模型（请确保 LM Studio 已启动并加载模型）", "")
+            self.refresh_models_btn.setText("🔄 重试")
+
+        self.refresh_models_btn.setEnabled(True)
+        
+        # 模型加载完成，启用 overlay 的监听按钮
+        self.overlay.set_listen_button_enabled(True)
+
+        from PyQt5.QtCore import QTimer
+        QTimer.singleShot(3000, lambda: self.refresh_models_btn.setText("🔄 刷新模型列表"))
+
+
     
     def _on_model_combo_changed(self, index: int):
         """模型选择变化时更新配置"""
@@ -605,7 +702,7 @@ class MainWindow(QMainWindow):
             return
 
         if self.audio_capture.is_running():
-            self.start_btn.setText("⏹ 停止监听")
+            self.start_btn.setText("⏹ 卸载模型")
             self.start_btn.setStyleSheet("""
                 QPushButton {
                     background-color: #F44336;
@@ -626,7 +723,7 @@ class MainWindow(QMainWindow):
             self.audio_device_combo.setEnabled(False)
             self.llm_combo.setEnabled(False)
         else:
-            self.start_btn.setText("▶ 开始监听")
+            self.start_btn.setText("▶ 加载模型")
             self.start_btn.setStyleSheet("""
                 QPushButton {
                     background-color: #0078D4;
@@ -729,6 +826,19 @@ class MainWindow(QMainWindow):
         else:
             self.caption_status.setText("字幕窗口：已隐藏（点击字幕按钮或 F12 重新显示）")
             self.caption_toggle_btn.setText("📑 字幕")
+    
+    def _on_overlay_listening_started(self):
+        """overlay 开始监听 - 在自动模式下触发转录"""
+        # 自动模式下，语音检测会自动触发转录
+        # 这里不需要做额外的事情
+        self.status_label.setText("● 监听中（自动转录）...")
+        self.status_label.setStyleSheet(f"color: {STATUS_COLORS['listening']};")
+
+    def _on_overlay_listening_stopped(self):
+        """overlay 停止监听"""
+        # 不做任何事，让自动模式继续运行
+        self.status_label.setText("● 监听中（自动转录）...")
+        self.status_label.setStyleSheet(f"color: {STATUS_COLORS['listening']};")
     
     def _update_volume_display(self):
         """更新音量显示"""

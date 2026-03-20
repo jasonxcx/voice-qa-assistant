@@ -49,10 +49,7 @@ class CaptionHistory(QWidget):
         self._update_font()
         layout.addWidget(self.content_label, 1)  # 拉伸因子为 1
 
-        # 翻页控制 - 固定在底部
-        control_layout = QHBoxLayout()
-        control_layout.setSpacing(6)
-
+        # 翻页控制已移动到 OverlayWindow - 只保留按钮引用
         self.prev_btn = QPushButton("◀")
         self.prev_btn.setToolTip("上一条")
         self.prev_btn.clicked.connect(self._show_previous)
@@ -69,13 +66,6 @@ class CaptionHistory(QWidget):
         self.next_btn.clicked.connect(self._show_next)
         self.next_btn.setFixedSize(32, 32)
         self.next_btn.setStyleSheet(self._button_stylesheet())
-
-        control_layout.addWidget(self.prev_btn)
-        control_layout.addWidget(self.page_label)
-        control_layout.addWidget(self.next_btn)
-        control_layout.addStretch()
-
-        layout.addLayout(control_layout)
 
         self._update_buttons()
 
@@ -281,6 +271,9 @@ class OverlayWindow(QWidget):
 
     # 可见性变化信号
     visibilityChanged = pyqtSignal(bool)
+    # 监听控制信号
+    listeningStarted = pyqtSignal()
+    listeningStopped = pyqtSignal()
     sizes = [8, 12, 16, 20, 24, 28, 32, 36, 40]
 
     def __init__(self, config):
@@ -291,6 +284,7 @@ class OverlayWindow(QWidget):
         self._resize_from_corner = None  # 记录从哪个角调节
         self._resize_start_pos = QPoint()  # 调节开始时的鼠标位置
         self._resize_start_geometry = (0, 0, 0, 0)  # (x, y, width, height)
+        self._listening = False  # 监听状态
         self._init_ui()
         self._setup_window_flags()
         self.setMouseTracking(True)
@@ -341,12 +335,9 @@ class OverlayWindow(QWidget):
                 border-bottom-right-radius: 12px;
             }
         """)
-        # 设置鼠标穿透，让窗口可以接收底层的鼠标事件
-        content_widget.setAttribute(Qt.WA_TransparentForMouseEvents)
 
         # 保存 content_widget 引用以便后续修改样式
         self.content_widget = content_widget
-
 
         content_layout = QVBoxLayout(content_widget)
         content_layout.setContentsMargins(10, 10, 10, 10)
@@ -378,6 +369,14 @@ class OverlayWindow(QWidget):
         self.font_up_btn.clicked.connect(self._on_font_up_clicked)
         self.font_up_btn.setStyleSheet(self._action_button_stylesheet())
 
+        # 监听控制按钮（合并开始/停止为一个按钮）
+        self.listen_btn = QPushButton("▶ 开始监听")
+        self.listen_btn.setToolTip("开始/停止监听音频")
+        self.listen_btn.setFixedHeight(28)
+        self.listen_btn.clicked.connect(self._on_listen_toggled)
+        self.listen_btn.setStyleSheet(self._listen_button_stylesheet())
+        self.listen_btn.setEnabled(False)  # 初始禁用，等待模型加载完成
+
         # 添加大小调节提示标签
         self.resize_label = QLabel("⇙ 或 ⇘ 拖动调节大小")
         self.resize_label.setAlignment(Qt.AlignCenter)
@@ -387,18 +386,20 @@ class OverlayWindow(QWidget):
         button_layout.addWidget(self.hide_btn)
         button_layout.addWidget(self.font_down_btn)
         button_layout.addWidget(self.font_up_btn)
+        button_layout.addWidget(self.listen_btn)
         button_layout.addWidget(self.resize_label)
         button_layout.addStretch()
+
+        # 翻页按钮放在右下角
+        button_layout.addWidget(self.caption_history.prev_btn)
+        button_layout.addWidget(self.caption_history.page_label)
+        button_layout.addWidget(self.caption_history.next_btn)
 
         content_layout.addLayout(button_layout)
         main_layout.addWidget(content_widget)
 
-        # 为子控件安装事件过滤器（以便在调节区域点击时拦截事件）
-        self.hide_btn.installEventFilter(self)
-        self.font_down_btn.installEventFilter(self)
-        self.font_up_btn.installEventFilter(self)
-        self.resize_label.installEventFilter(self)
-        self.caption_history.installEventFilter(self)
+        # 为 content_widget 安装事件过滤器，用于检测 resize 区域
+        content_widget.installEventFilter(self)
 
         # 阴影效果
         shadow = QGraphicsDropShadowEffect()
@@ -408,9 +409,10 @@ class OverlayWindow(QWidget):
         self.setGraphicsEffect(shadow)
 
     def _hide_button_stylesheet(self):
+        """隐藏按钮样式 - 灰色"""
         return """
             QPushButton {
-                background-color: rgba(255, 100, 100, 100);
+                background-color: rgba(128, 128, 128, 100);
                 color: #FFFFFF;
                 border: none;
                 border-radius: 4px;
@@ -418,7 +420,7 @@ class OverlayWindow(QWidget):
                 font-size: 11px;
             }
             QPushButton:hover {
-                background-color: rgba(255, 100, 100, 150);
+                background-color: rgba(128, 128, 128, 150);
             }
         """
 
@@ -437,6 +439,50 @@ class OverlayWindow(QWidget):
                 background-color: rgba(100, 150, 255, 150);
             }
         """
+
+    def _listen_button_stylesheet(self):
+        """监听按钮样式 - 绿色（未监听）/ 红色（监听中）"""
+        # 检查当前状态
+        is_listening = getattr(self, '_listening', False)
+
+        if is_listening:
+            return """
+                QPushButton {
+                    background-color: rgba(244, 67, 54, 150);
+                    color: #FFFFFF;
+                    border: none;
+                    border-radius: 4px;
+                    padding: 4px 10px;
+                    font-size: 11px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: rgba(244, 67, 54, 200);
+                }
+                QPushButton:disabled {
+                    background-color: rgba(244, 67, 54, 50);
+                    color: rgba(255, 255, 255, 100);
+                }
+            """
+        else:
+            return """
+                QPushButton {
+                    background-color: rgba(76, 175, 80, 150);
+                    color: #FFFFFF;
+                    border: none;
+                    border-radius: 4px;
+                    padding: 4px 10px;
+                    font-size: 11px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: rgba(76, 175, 80, 200);
+                }
+                QPushButton:disabled {
+                    background-color: rgba(76, 175, 80, 50);
+                    color: rgba(255, 255, 255, 100);
+                }
+            """
 
     def _setup_window_flags(self):
         self.setWindowFlags(
@@ -489,7 +535,7 @@ class OverlayWindow(QWidget):
             self.setCursor(Qt.ArrowCursor)
 
     def mousePressEvent(self, event):
-        """鼠标按下事件 - 处理左下角和右下角调节大小"""
+        """鼠标按下事件 - 处理直接在窗口上的鼠标事件"""
         if event.button() == Qt.LeftButton:
             rect = self.rect()
             local_mouse_pos = event.pos()
@@ -526,11 +572,13 @@ class OverlayWindow(QWidget):
                 event.accept()
                 return
 
+        # 调用 super() 确保事件正确处理
         super().mousePressEvent(event)
 
     def eventFilter(self, obj, event):
-        """事件过滤器 - 处理子控件的鼠标事件以支持 resize"""
-        if event.type() == event.MouseButtonPress and event.button() == Qt.LeftButton:
+        """事件过滤器 - 处理 content_widget 的鼠标事件以支持 resize"""
+        # 只处理 content_widget 的鼠标按下事件
+        if obj == self.content_widget and event.type() == event.MouseButtonPress and event.button() == Qt.LeftButton:
             # 使用全局坐标检测是否在调节区域内
             cursor_global_pos = QCursor.pos()
             window_top_left = self.mapToGlobal(QPoint(0, 0))
@@ -540,12 +588,12 @@ class OverlayWindow(QWidget):
             )
             rect = self.rect()
 
+            # 检查是否在调节区域内（底部 40 像素区域）
             bottom_left_rect = QRect(rect.left(), rect.bottom() - 40, 40, 40)
             bottom_right_rect = QRect(rect.right() - 40, rect.bottom() - 40, 40, 40)
 
             if bottom_left_rect.contains(local_mouse_pos) or bottom_right_rect.contains(local_mouse_pos):
                 # 在调节区域内，触发窗口的 resize 处理
-                # 记录初始位置和大小，用于计算偏移量
                 self._resize_start_pos = cursor_global_pos
                 self._resize_start_geometry = (self.x(), self.y(), self.width(), self.height())
 
@@ -555,9 +603,10 @@ class OverlayWindow(QWidget):
                 else:
                     self._resizing = True
                     self._resize_from_corner = "bottom_right"
-                return True  # 过滤掉事件，不让子控件处理
+                return True  # 过滤掉事件，不让 content_widget 处理
 
-        return super().eventFilter(obj, event)
+        # 不在调节区域内，返回 False 让事件正常传递
+        return False
 
     def mouseMoveEvent(self, event):
         """鼠标移动事件 - 处理窗口大小调节"""
@@ -624,6 +673,31 @@ class OverlayWindow(QWidget):
 
     def _on_hide_clicked(self):
         self.hide()
+
+    def set_listen_button_enabled(self, enabled: bool):
+        """设置监听按钮的启用状态"""
+        print(f"[Debug] set_listen_button_enabled({enabled})", flush=True)
+        self.listen_btn.setEnabled(enabled)
+        # 重新设置样式以确保样式正确应用
+        self.listen_btn.setStyleSheet(self._listen_button_stylesheet())
+
+    def _on_listen_toggled(self):
+        """监听按钮切换"""
+        if hasattr(self, '_listening') and self._listening:
+            # 停止监听
+            self.listeningStopped.emit()
+            self._listening = False
+            self.listen_btn.setText("▶ 开始监听")
+            self.listen_btn.setStyleSheet(self._listen_button_stylesheet())
+        else:
+            # 开始监听
+            self.listeningStarted.emit()
+            self._listening = True
+            self.listen_btn.setText("■ 停止监听")
+            self.listen_btn.setProperty("listening", "true")
+            self.listen_btn.setStyleSheet(self._listen_button_stylesheet())
+            # 开始时立即触发一次转录，捕获用户即将开始的发言
+            # 注意：实际的转录会在 _on_overlay_listening_started 中由主窗口处理
 
     def _on_font_down_clicked(self):
         try:
