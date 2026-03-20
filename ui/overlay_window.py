@@ -3,13 +3,13 @@
 特性：
 - 背景完全透明
 - 顶部拖动条（可拖动窗口，双击隐藏）
-- 控制按钮：隐藏、字体变大、字体变小、上一条、下一条
+- 控制按钮：隐藏、字体变大、字体变小、监听控制
 - F12 快捷键显示/隐藏
 - 鼠标拖动边缘调节窗口大小
 - 显示"等待音频输入..."占位符
 """
 from PyQt5.QtWidgets import (
-    QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton,
+    QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton, QScrollArea,
     QGraphicsDropShadowEffect, QSizeGrip
 )
 from PyQt5.QtCore import Qt, QPoint, QTimer, pyqtSignal, QEvent, QPropertyAnimation, QEasingCurve, QRect
@@ -18,7 +18,7 @@ from collections import deque
 
 
 class CaptionHistory(QWidget):
-    """字幕历史记录组件"""
+    """字幕历史记录组件 - 累积显示所有内容"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -169,6 +169,35 @@ class CaptionHistory(QWidget):
 
     def set_font_size(self, size):
         self._update_font(size)
+
+    def update_last_answer(self, new_text: str):
+        """更新最后一个 answer 条目（用于流式更新）"""
+        color = "#81C784"  # answer 类型的颜色
+        formatted = f'<span style="color: {color};">{new_text}</span>'
+
+        # 如果 history 为空，添加新条目
+        if len(self.history) == 0:
+            self.history.append(formatted)
+            self.history_types.append("answer")
+        else:
+            # 查找最后一个 answer 类型的条目索引
+            found = False
+            for i in range(len(self.history_types) - 1, -1, -1):
+                if self.history_types[i] == "answer":
+                    # 更新该条目和类型
+                    self.history[i] = formatted
+                    found = True
+                    break
+
+            if not found:
+                # 没有找到 answer 条目，添加新条目
+                self.history.append(formatted)
+                self.history_types.append("answer")
+
+        # 更新显示
+        self._display_all()
+        # 滚动到底部
+        self._scroll_to_bottom()
 
     def enterEvent(self, event):
         """鼠标移入 - 更新按钮样式"""

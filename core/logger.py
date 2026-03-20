@@ -99,15 +99,16 @@ system_logger = setup_logger(
 )
 
 
-def log_stt(text: str, source: str = "transcription"):
+def log_stt(text: str, source: str = "transcription", level: int = logging.INFO):
     """
     记录 STT 转录文本
     
     Args:
         text: 转论文本
         source: 来源（transcription/realtime）
+        level: 日志级别
     """
-    stt_logger.info(f"[{source}] {text}")
+    stt_logger.log(level, f"[{source}] {text}")
 
 
 def log_llm(question: str, answer: str, model: str = "unknown"):
@@ -119,7 +120,7 @@ def log_llm(question: str, answer: str, model: str = "unknown"):
         answer: 回答
         model: 模型名称
     """
-    llm_logger.info(f"[{model}] Q: {question} | A: {answer}")
+    llm_logger.info(f"[{model}] {question} \n{answer}")
 
 
 def log_system(message: str, level: int = logging.INFO):
