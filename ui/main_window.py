@@ -103,15 +103,16 @@ class MainWindow(QMainWindow):
         self.llm_combo.addItems(["OpenAI (云端)", "Ollama（本地）", "LM Studio (本地)"])
         self.llm_combo.currentIndexChanged.connect(self._on_llm_changed)
         llm_form.addRow("模型模式:", self.llm_combo)
-        
+
         # 模型名称输入框
         self.model_name_input = QLineEdit()
         self.model_name_input.setPlaceholderText("如：qwen3.5-plus, qwen2.5:7b")
-        llm_form.addRow("模型名称:", self.model_name_input)
+        self.model_name_input_label = QLabel("模型名称:")
+        llm_form.addRow(self.model_name_input_label, self.model_name_input)
 
         # 模型Url输入框
         self.llm_url = QLineEdit()
-        self.model_name_input.setPlaceholderText("http://localhost")
+        self.llm_url.setPlaceholderText("http://localhost")
 
         # LM Studio 模型刷新按钮和下拉框
         self.refresh_models_btn = QPushButton("🔄 刷新模型列表")
@@ -346,6 +347,7 @@ class MainWindow(QMainWindow):
 
         # OpenAI/Ollama 模式：只显示模型名称输入框
         # LM Studio 模式：只显示模型选择下拉框和刷新按钮
+        self.model_name_input_label.setVisible(not is_lmstudio)
         self.model_name_input.setVisible(not is_lmstudio)
         self.model_combo_label.setVisible(is_lmstudio)
         self.model_combo.setVisible(is_lmstudio)
@@ -439,6 +441,7 @@ class MainWindow(QMainWindow):
         is_lmstudio = (index == 2)
 
         # OpenAI/Ollama 模式：显示模型名称输入框，隐藏模型选择下拉框
+        self.model_name_input_label.setVisible(not is_lmstudio)
         self.model_name_input.setVisible(not is_lmstudio)
         self.model_combo_label.setVisible(is_lmstudio)
         self.model_combo.setVisible(is_lmstudio)
