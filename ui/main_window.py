@@ -16,6 +16,7 @@ import logging
 import datetime
 import asyncio
 import threading
+import requests
 
 
 from core.config import Config
@@ -111,25 +112,27 @@ class MainWindow(QMainWindow):
         # 模型Url输入框
         self.llm_url = QLineEdit()
         self.model_name_input.setPlaceholderText("http://localhost")
-        
+
         # LM Studio 模型刷新按钮和下拉框
         self.refresh_models_btn = QPushButton("🔄 刷新模型列表")
         self.refresh_models_btn.setToolTip("从 LM Studio 获取可用模型")
         self.refresh_models_btn.setFixedHeight(28)
         self.refresh_models_btn.clicked.connect(self._refresh_lmstudio_models)
         self.refresh_models_btn.setEnabled(False)
-        llm_form.addRow("", self.refresh_models_btn)
-        
+
         self.model_combo = QComboBox()
-        self.model_combo.setEditable(False)  # 不可编辑，只能选择
+        self.model_combo.setEditable(True)  # 可编辑，也可以手动输入
         self.model_combo.setToolTip("从 LM Studio 选择模型（鼠标悬停查看参数）")
         self.model_combo.setEnabled(False)  # 默认禁用
         self.model_combo.currentIndexChanged.connect(self._on_model_combo_changed)
-        llm_form.addRow("选择模型:", self.model_combo)
-        self.model_combo.setEditable(True)
-        self.model_combo.setToolTip("选择或输入模型名称 (仅 LM Studio 模式)")
-        self.model_combo.setEnabled(False)
-        llm_form.addRow("可选模型:", self.model_combo)
+
+        # 使用 QHBoxLayout 将刷新按钮和下拉框放在同一行
+        self.model_combo_layout = QHBoxLayout()
+        self.model_combo_layout.setSpacing(4)
+        self.model_combo_layout.addWidget(self.model_combo)
+        self.model_combo_layout.addWidget(self.refresh_models_btn)
+        self.model_combo_label = QLabel("选择模型:")
+        llm_form.addRow(self.model_combo_label, self.model_combo_layout)
         
         llm_layout.addLayout(llm_form)
         layout.addWidget(llm_group)
@@ -340,7 +343,11 @@ class MainWindow(QMainWindow):
         # 根据当前模式设置 UI 可见性
         is_lmstudio = (self.config.llm_mode == "lmstudio")
         print(f"[Debug] is_lmstudio={is_lmstudio}", flush=True)
+
+        # OpenAI/Ollama 模式：只显示模型名称输入框
+        # LM Studio 模式：只显示模型选择下拉框和刷新按钮
         self.model_name_input.setVisible(not is_lmstudio)
+        self.model_combo_label.setVisible(is_lmstudio)
         self.model_combo.setVisible(is_lmstudio)
         self.refresh_models_btn.setVisible(is_lmstudio)
         self.model_combo.setEnabled(is_lmstudio)
@@ -430,12 +437,13 @@ class MainWindow(QMainWindow):
         
         # 启用/禁用 LM Studio 模型刷新按钮和下拉框
         is_lmstudio = (index == 2)
-        
+
         # OpenAI/Ollama 模式：显示模型名称输入框，隐藏模型选择下拉框
         self.model_name_input.setVisible(not is_lmstudio)
+        self.model_combo_label.setVisible(is_lmstudio)
         self.model_combo.setVisible(is_lmstudio)
         self.refresh_models_btn.setVisible(is_lmstudio)
-        
+
         # 启用/禁用
         self.model_combo.setEnabled(is_lmstudio)
         self.refresh_models_btn.setEnabled(is_lmstudio)
@@ -497,8 +505,7 @@ class MainWindow(QMainWindow):
         def fetch_models():
             models = []  # 初始化 models 变量
             try:
-                import requests
-                base_url = self.llm_url.text().rstrip('/')
+                base_url = self.config.llm_base_url.rstrip('/')
                 if not base_url:
                     base_url = "http://localhost:1234"
 
@@ -537,30 +544,17 @@ class MainWindow(QMainWindow):
                 print(f"[Debug] finally 块，models 数量={len(models)}")
                 print(f"[Debug] 调用 _update_model_combo (models={len(models)})")
                 # 直接更新 UI（在主线程中）
-                self._pending_models = models
-                # 使用callLater 风格的方式
-                from PyQt5.QtCore import QTimer
-                timer = QTimer()
-                timer.timeout.connect(self._apply_model_combo_update)
-                timer.setSingleShot(True)
-                timer.start(0)
-                # 保持 timer 引用，防止被 GC
-                self._update_timer = timer
+                self._update_model_combo(models)
 
         print("[Debug] 启动线程")
         threading.Thread(target=fetch_models, daemon=True).start()
 
-    
-    def _apply_model_combo_update(self):
-        """应用模型列表更新（从实例变量读取）"""
-        models = getattr(self, '_pending_models', [])
-        print(f"[Debug] _apply_model_combo_update 开始，models={len(models)}")
-        self._update_model_combo(models)
-
     def _update_model_combo(self, models: List[Dict]):
         """更新模型下拉框（带详细信息）"""
-        print(f"[Debug] _update_model_combo 开始，models={len(models)}")
+        print(f"[Debug] _update_model_combo 开始，models={len(models)}", flush=True)
+        print(f"[Debug] 清空下拉框", flush=True)
         self.model_combo.clear()
+        print(f"[Debug] 下拉框已清空", flush=True)
         
         if models:
             for model in models:
@@ -605,17 +599,21 @@ class MainWindow(QMainWindow):
                 self.model_combo.addItem(f"{display_name} ({key})", key)
                 # 设置提示
                 self.model_combo.setItemData(self.model_combo.count() - 1, tooltip, Qt.ToolTipRole)
-            
-            self.refresh_models_btn.setText("✅ 已更新")
         else:
             self.model_combo.addItem("未找到模型（请确保 LM Studio 已启动）", "")
-            self.refresh_models_btn.setText("🔄 重试")
-        
-        print(f"[Debug] _update_model_combo 完成，设置了 {len(models)} 个模型")
+        self.refresh_models_btn.setText("🔄 刷新模型列表")
+        print(f"[Debug] 设置刷新按钮文本为重试", flush=True)
+
+        print(f"[Debug] _update_model_combo 完成1", flush=True)
+        print(f"[Debug] _update_model_combo 完成，设置了 {len(models)} 个模型", flush=True)
+        print(f"[Debug] _update_model_combo 完成2", flush=True)
+        print(f"[Debug] 启用刷新按钮", flush=True)
         self.refresh_models_btn.setEnabled(True)
-        
+
         # 模型加载完成，启用 overlay 的监听按钮
+        print(f"[Debug] 启用 overlay 的监听按钮", flush=True)
         self.overlay.set_listen_button_enabled(True)
+        print(f"[Debug] 启用 overlay 的监听按钮完成", flush=True)
         
         from PyQt5.QtCore import QTimer
         QTimer.singleShot(3000, lambda: self.refresh_models_btn.setText("🔄 刷新模型列表"))
@@ -629,7 +627,7 @@ class MainWindow(QMainWindow):
                 key = model.get("key", "unknown")
                 display_name = model.get("display_name", key)
                 self.model_combo.addItem(display_name, key)
-            self.refresh_models_btn.setText("✅ 已更新")
+            self.refresh_models_btn.setText("🔄 刷新模型列表")
         else:
             self.model_combo.addItem("未找到模型（请确保 LM Studio 已启动并加载模型）", "")
             self.refresh_models_btn.setText("🔄 重试")
