@@ -181,3 +181,9 @@ class LLMClient:
 回答："""
 
         return await self.client.generate_stream(prompt, system_prompt, callback)
+
+if __name__ == '__main__':
+    from core.config import get_config
+    import asyncio
+    llm_client = LLMClient(get_config())
+    asyncio.run(llm_client.generate_answer_stream("请讲一下TCP的3次握手和四次挥手"))

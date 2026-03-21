@@ -63,9 +63,9 @@ llm:
 或使用本地 Ollama / LM Studio:
 ```yaml
 llm:
-  mode: "ollama" # 或者 lmstudio
-  base_url: "http://localhost:11434"
-  model: "qwen2.5:7b"
+  mode: "lmstudio" # 或者 
+  base_url: "http://127.0.0.1:1234"
+  model: "qwen3.5-4b"
 ```
 
 ### 3. 运行程序

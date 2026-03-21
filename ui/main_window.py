@@ -127,7 +127,7 @@ class MainWindow(QMainWindow):
 
         # 模型Url输入框
         self.llm_url = QLineEdit()
-        self.llm_url.setPlaceholderText("http://localhost")
+        self.llm_url.setPlaceholderText("http://127.0.0.1")
 
         # LM Studio 模型刷新按钮和下拉框
         self.refresh_models_btn = QPushButton("🔄 刷新模型列表")
@@ -526,7 +526,7 @@ class MainWindow(QMainWindow):
             try:
                 base_url = self.config.llm_base_url.rstrip('/')
                 if not base_url:
-                    base_url = "http://localhost:1234"
+                    base_url = "http://127.0.0.1:1234"
 
                 print(f"[Debug] 请求 LM Studio API: {base_url}/api/v1/models")
                 # 使用 LM Studio 的/api/v1/models 接口获取详细信息

@@ -127,7 +127,7 @@ class Config:
         Returns:
             (是否有效，错误信息)
         """
-        if not self.llm_base_url.startswith("http://localhost") and not self.llm_api_key:
+        if not self.llm_base_url.startswith("http://127.0.0.1") and not self.llm_api_key:
             return False, f"请配置 {self.llm_mode} 的 API Key"
         return True, ""
 
@@ -144,7 +144,7 @@ class Config:
     @property
     def llm_base_url(self) -> str:
         """获取当前使用的 LLM API 基础 URL"""
-        default_url = "http://localhost:1234" if self.llm_mode == "lmstudio" else "https://coding.dashscope.aliyuncs.com/v1"
+        default_url = "http://127.0.0.1:1234" if self.llm_mode == "lmstudio" else "https://coding.dashscope.aliyuncs.com/v1"
         return self.get("llm.base_url", default_url)
 
     @property
