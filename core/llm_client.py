@@ -53,13 +53,17 @@ class BaseLLMClient:
         )
         full_content = ""
         for chunk in stream:
-            if chunk.choices and chunk.choices[0].delta.content:
-                content = chunk.choices[0].delta.content
-                full_content += content
-                if callback:
-                    callback(content)
-                # 调试日志：输出完整的 chunk
-                print(content, end="")
+            if chunk.choices:
+                delta = chunk.choices[0].delta
+                if hasattr(delta, 'content') and delta.content:
+                    content = delta.content
+                    full_content += content
+                    if callback:
+                        callback(content)
+                    # 调试日志：输出完整的 chunk
+                    print(delta.content, end="")
+                elif hasattr(delta, 'reasoning_content') and delta.reasoning_content:
+                    print(delta.reasoning_content, end="")
 
         print(f"\n[LLM] 流式生成完成，总内容长度：{len(full_content)}", flush=True)
         return full_content

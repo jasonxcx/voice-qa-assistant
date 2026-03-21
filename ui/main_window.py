@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 
 import requests
 import sounddevice as sd
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtCore import Qt, QTimer, pyqtSlot, pyqtSignal
 from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import (
     QComboBox,
@@ -37,7 +37,12 @@ from ui.styles import MAIN_WINDOW_STYLESHEET, STATUS_COLORS
 
 class MainWindow(QMainWindow):
     """主窗口"""
-    
+
+    # 信号用于线程间通信
+    token_signal = pyqtSignal(str, int)  # token, page_index
+    complete_signal = pyqtSignal(str)    # answer
+    error_signal = pyqtSignal(str)       # error_msg
+
     def __init__(self, overlay_window, audio_capture, llm_client):
         super().__init__()
         self.overlay = overlay_window
@@ -396,6 +401,11 @@ class MainWindow(QMainWindow):
         # 连接 overlay 的监听控制信号
         self.overlay.listeningStarted.connect(self._on_overlay_listening_started)
         self.overlay.listeningStopped.connect(self._on_overlay_listening_stopped)
+
+        # 连接 LLM 信号到槽函数
+        self.token_signal.connect(self._on_token_update)
+        self.complete_signal.connect(self._on_generation_complete)
+        self.error_signal.connect(self._on_llm_error_slot)
 
         self.volume_timer = QTimer()
         self.volume_timer.timeout.connect(self._update_volume_display)
@@ -825,8 +835,8 @@ class MainWindow(QMainWindow):
         log_entry = f"[{timestamp}] 问题：{text}"
         self.transcription_log.append(log_entry)
 
-        # 问题发送到字幕窗口（不显示转录，直接显示"正在生成回答..."）
-        self.overlay.update_caption("正在生成回答...", "listening")
+        # 添加新问题到字幕窗口（开始新的一页），先显示问题，回答稍后流式显示
+        self.overlay.caption_history.add_new_question(text)
 
         # 添加到队列并处理
         self.caption_queue.append(("question", text))
@@ -836,11 +846,11 @@ class MainWindow(QMainWindow):
         self._process_caption_queue()
 
     def _on_realtime_update(self, text: str):
-        """实时转录更新 - 显示在主窗口日志"""
+        """实时转录更新 - 不更新字幕回答，只更新状态"""
         self.status_label.setText(f"● 听写中...")
         self.status_label.setStyleSheet(f"color: {STATUS_COLORS['listening']};")
-        # 只在字幕窗口可见时更新
-        self.overlay.update_caption(text, "normal")
+        # 不再调用 update_caption，避免把转录文本误认为是回答
+        # 实时转录已在主窗口日志中显示
 
     def _on_recording_started(self):
         """录音开始"""
@@ -973,27 +983,73 @@ class MainWindow(QMainWindow):
         item_type, text = self.caption_queue.pop(0)
 
         if item_type == "question":
-            # 不显示转录问题，直接显示"正在生成回答..."
             # 使用独立线程运行异步 LLM 调用（流式生成）
             threading.Thread(target=self._run_generate_answer_stream, args=(text,), daemon=True).start()
 
     def _run_generate_answer_stream(self, question: str):
         """在独立线程中运行异步 LLM 流式生成"""
         try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                loop.run_until_complete(self._generate_and_show_answer_stream(question))
-            finally:
-                loop.close()
+            # 在新线程中运行异步函数
+            asyncio.run(self._generate_and_show_answer_stream(question))
         except Exception as e:
-            # 在线程中捕获异常并更新 UI
-            from PyQt5.QtCore import QTimer
+            print(f"[DEBUG] _run_generate_answer_stream: error={e}", flush=True)
+            import traceback
+            traceback.print_exc()
+
+    async def _generate_and_show_answer_stream(self, question: str):
+        """流式生成并显示回答"""
+        try:
+            full_answer = ""
+            current_page_index = self.overlay.caption_history.current_page
+            print(f"[DEBUG] _generate_and_show_answer_stream: start, question='{question[:50]}...', current_page_index={current_page_index}", flush=True)
+
+            def on_token(token: str):
+                """每个 token 生成时的回调"""
+                nonlocal full_answer
+                full_answer += token
+                # 发送信号到主线程更新UI
+                self.token_signal.emit(token, current_page_index)
+
+            full_answer = await self.llm_client.generate_answer_stream(question, self.resume_data, on_token)
+            print(f"[DEBUG] _generate_and_show_answer_stream: done, answer len={len(full_answer)}", flush=True)
+            log_llm(question, full_answer, self.config.llm_mode)
+            # 发送完成信号
+            self.complete_signal.emit(full_answer)
+        except Exception as e:
             error_msg = f"生成失败：{str(e)}"
-            QTimer.singleShot(0, lambda: self._on_llm_error(error_msg))
+            log_system(error_msg, logging.ERROR)
+            print(f"[DEBUG] _generate_and_show_answer_stream: error={e}", flush=True)
+            self.error_signal.emit(error_msg)
+
+    @pyqtSlot(str, int)
+    def _on_token_update(self, token: str, page_index: int):
+        """处理LLM token更新（在主线程中调用）"""
+        print(f"[DEBUG] _on_token_update: token='{token[:20]}...', page_index={page_index}", flush=True)
+        # 获取当前显示的文本并追加新token
+        current_text = self.overlay.caption_history.pages[page_index]["answer"] if 0 <= page_index < len(self.overlay.caption_history.pages) else ""
+        new_text = current_text + token
+        self.overlay.caption_history.update_answer_streaming(new_text, page_index)
+
+    @pyqtSlot(str)
+    def _on_generation_complete(self, answer: str):
+        """生成完成 - 更新状态"""
+        self.status_label.setText("● 就绪")
+        self.status_label.setStyleSheet(f"color: {STATUS_COLORS['idle']};")
+
+    @pyqtSlot(str)
+    def _on_llm_error_slot(self, error_msg: str):
+        """LLM 错误处理（槽函数版本）"""
+        log_system(error_msg, logging.ERROR)
+        QMessageBox.warning(self, "生成失败", error_msg)
+        self.status_label.setText("● 错误")
+        self.status_label.setStyleSheet(f"color: {STATUS_COLORS['error']};")
+
+        # 检测 503 错误，提示用户切换 LLM
+        if "503" in error_msg or "Service Unavailable" in error_msg:
+            QMessageBox.warning(self, "LLM 服务不可用", f"LM Studio 服务不可用 (503 错误)，请切换到其他 LLM 模式")
 
     def _on_llm_error(self, error_msg: str):
-        """LLM 错误处理"""
+        """LLM 错误处理（主线程调用版本）"""
         log_system(error_msg, logging.ERROR)
         if self.overlay.isVisible():
             self.overlay.update_caption(f"错误：{error_msg}", "error")
@@ -1004,45 +1060,10 @@ class MainWindow(QMainWindow):
         if "503" in error_msg or "Service Unavailable" in error_msg:
             QMessageBox.warning(self, "LLM 服务不可用", f"LM Studio 服务不可用 (503 错误)，请切换到其他 LLM 模式")
 
-    async def _generate_and_show_answer_stream(self, question: str):
-        """流式生成并显示回答"""
-        try:
-            full_answer = ""
-
-            def on_token(token: str):
-                """每个 token 生成时的回调"""
-                nonlocal full_answer
-                full_answer += token
-                # 使用 QTimer.singleShot 在主线程中更新 UI
-                # 这个回调可能在 OpenAI SDK 的线程中被调用
-                from PyQt5.QtCore import QTimer
-                QTimer.singleShot(0, lambda: self._update_caption_streaming(full_answer))
-            full_answer = await self.llm_client.generate_answer_stream(question, self.resume_data, on_token)
-            log_llm(question, full_answer, self.config.llm_mode)
-            # 完成后更新日志和状态
-            from PyQt5.QtCore import QTimer
-            QTimer.singleShot(0, lambda: self._update_ui_with_answer(full_answer))
-        except Exception as e:
-            error_msg = f"生成失败：{str(e)}"
-            log_system(error_msg, logging.ERROR)
-            from PyQt5.QtCore import QTimer
-            QTimer.singleShot(0, lambda: self._on_llm_error(error_msg))
-
-    def _update_caption_streaming(self, current_text: str):
-        """流式更新字幕 - 更新最后一个 answer 条目"""
-        self.overlay.caption_history.update_last_answer(current_text)
-
-    def _update_ui_with_answer(self, answer: str):
-        """在主线程中更新 UI 显示回答"""
-        timestamp = datetime.datetime.now().strftime("%H:%M:%S")
-        log_entry = f"[{timestamp}] 回答：{answer}"
-        self.transcription_log.append(log_entry)
-
-        # 回答显示在字幕窗口
-        if self.overlay.isVisible():
-            self.overlay.update_caption(answer, "answer")
-        self.status_label.setText("● 就绪")
-        self.status_label.setStyleSheet(f"color: {STATUS_COLORS['idle']};")
+    def _update_caption_streaming(self, current_text: str, page_index: int = None):
+        """流式更新字幕 - 更新当前页的回答"""
+        print(f"[DEBUG] _update_caption_streaming: current_text='{current_text[:50]}...' len={len(current_text)}, page_index={page_index}", flush=True)
+        self.overlay.caption_history.update_answer_streaming(current_text, page_index)
 
     def _clear_transcription_log(self):
         """清空转录日志"""

@@ -18,12 +18,12 @@ from collections import deque
 
 
 class CaptionHistory(QWidget):
-    """字幕历史记录组件 - 累积显示所有内容"""
+    """字幕历史记录组件 - 每个问题占一页"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.history = deque(maxlen=100)
-        self.current_index = -1
+        self.pages = []  # 每个元素是 {"question": str, "answer": str}
+        self.current_page = -1
         self._placeholder_text = "等待音频输入..."
         self._init_ui()
 
@@ -38,20 +38,19 @@ class CaptionHistory(QWidget):
         layout.setSpacing(6)
 
         # 内容标签 - 初始显示占位符
-        # 设置 minimumHeight 确保占位符可见
         self.content_label = QLabel(self._placeholder_text)
         self.content_label.setObjectName("contentLabel")
         self.content_label.setAlignment(Qt.AlignTop | Qt.AlignLeft)
         self.content_label.setWordWrap(True)
         self.content_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        self.content_label.setMinimumHeight(60)  # 确保占位符可见
+        self.content_label.setMinimumHeight(60)
         self._set_placeholder_style()
         self._update_font()
-        layout.addWidget(self.content_label, 1)  # 拉伸因子为 1
+        layout.addWidget(self.content_label, 1)
 
         # 翻页控制已移动到 OverlayWindow - 只保留按钮引用
         self.prev_btn = QPushButton("◀")
-        self.prev_btn.setToolTip("上一条")
+        self.prev_btn.setToolTip("上一页")
         self.prev_btn.clicked.connect(self._show_previous)
         self.prev_btn.setFixedSize(32, 32)
         self.prev_btn.setStyleSheet(self._button_stylesheet())
@@ -62,7 +61,7 @@ class CaptionHistory(QWidget):
         self.page_label.setFixedHeight(32)
 
         self.next_btn = QPushButton("▶")
-        self.next_btn.setToolTip("下一条")
+        self.next_btn.setToolTip("下一页")
         self.next_btn.clicked.connect(self._show_next)
         self.next_btn.setFixedSize(32, 32)
         self.next_btn.setStyleSheet(self._button_stylesheet())
@@ -111,93 +110,123 @@ class CaptionHistory(QWidget):
         font.setWeight(QFont.Normal)
         self.content_label.setFont(font)
 
-    def add_caption(self, text, caption_type="answer"):
-        if len(self.history) == 0:
-            self.content_label.setText("")
-            self._set_content_style()
+    def add_new_question(self, question: str):
+        """添加新问题 - 开始新的一页"""
+        self.pages = [p for p in self.pages if p.get("question", "")]
+        self.current_page = len(self.pages) - 1
 
-        color_map = {
-            "listening": "#90CAF9",
-            "answer": "#81C784",
-            "normal": "#FFFFFF",
-            "error": "#EF5350"
-        }
-
-        color = color_map.get(caption_type, "#FFFFFF")
-        formatted = f'<span style="color: {color};">{text}</span>'
-
-        self.history.append(formatted)
-        self.current_index = len(self.history) - 1
-
+        self.pages.append({"question": question, "answer": ""})
+        self.current_page = len(self.pages) - 1
         self._display_current()
         self._update_buttons()
 
+    def update_answer_streaming(self, answer_text: str, page_index: int = None):
+        """流式更新回答 - 更新当前页的回答"""
+        print(f"[DEBUG] update_answer_streaming called: answer_text len={len(answer_text)}, page_index={page_index}, current_page={self.current_page}", flush=True)
+        target_page = page_index if page_index is not None else self.current_page
+        print(f"[DEBUG] update_answer_streaming: target_page={target_page}, pages_count={len(self.pages)}", flush=True)
+        if target_page < 0 or target_page >= len(self.pages):
+            print(f"[DEBUG] update_answer_streaming: target_page out of range", flush=True)
+            return
+
+        prev_answer = self.pages[target_page].get("answer", "")[:50]
+        print(f"[DEBUG] update_answer_streaming: 更新前 pages[{target_page}] answer='{prev_answer}...'", flush=True)
+        self.pages[target_page]["answer"] = answer_text
+        new_answer = self.pages[target_page].get("answer", "")[:50]
+        print(f"[DEBUG] update_answer_streaming: 更新后 pages[{target_page}] answer='{new_answer}...'", flush=True)
+        self._display_current()
+
+    def add_caption(self, text, caption_type="answer"):
+        """添加字幕（向后兼容）"""
+        # 对于 listening 类型，使用当前页回答部分来显示（流式更新）
+        if caption_type == "listening":
+            # listening 类型用于流式更新，更新当前页的回答
+            if self.current_page < 0 or self.current_page >= len(self.pages):
+                # 如果还没有页面，创建一个临时页面
+                self.pages.append({"question": "", "answer": text})
+                self.current_page = 0
+            else:
+                # 更新当前页的回答（覆盖而不是追加）
+                self.pages[self.current_page]["answer"] = text
+            self._display_current()
+        elif caption_type == "answer" or caption_type == "normal":
+            # answer/normal 类型追加到回答
+            if self.current_page < 0 or self.current_page >= len(self.pages):
+                # 如果还没有页面，创建一个
+                self.pages.append({"question": "", "answer": text})
+                self.current_page = 0
+            else:
+                # 更新当前页的回答
+                current_answer = self.pages[self.current_page]["answer"]
+                self.pages[self.current_page]["answer"] = current_answer + text
+            self._display_current()
+        elif caption_type == "error":
+            # 错误类型，添加为新页面的问题部分
+            self.pages.append({"question": f"错误：{text}", "answer": ""})
+            self.current_page = len(self.pages) - 1
+            self._display_current()
+            self._update_buttons()
+
+    def update_last_answer(self, new_text: str):
+        """更新最后一个 answer 条目（用于流式更新）"""
+        self.update_answer_streaming(new_text)
+
     def _display_current(self):
-        if self.current_index < 0 or self.current_index >= len(self.history):
+        """显示当前页的内容"""
+        if self.current_page < 0 or self.current_page >= len(self.pages):
             self.content_label.setText(self._placeholder_text)
             self._set_placeholder_style()
             self.page_label.setText("0 / 0")
             return
 
-        # 只显示当前一条，不显示历史记录
-        texts = [list(self.history)[self.current_index]]
-        html = "<br/>".join(texts)
+        page = self.pages[self.current_page]
+        question = page.get("question", "")
+        answer = page.get("answer", "")
+
+        if not question and not answer:
+            self.content_label.setText(self._placeholder_text)
+            self._set_placeholder_style()
+            self.page_label.setText(f"{self.current_page + 1} / {len(self.pages)}")
+            return
+
+        # 组合显示：问题在第一行，回答在后面
+        parts = []
+        if question:
+            # 问题用蓝色显示
+            parts.append(f'<span style="color: #90CAF9; font-weight: bold;">问题：{question}</span>')
+        if answer:
+            # 回答用绿色显示
+            parts.append(f'<span style="color: #81C784;">回答：{answer}</span>')
+
+        html = "<br/><br/>".join(parts)
         self.content_label.setText(html)
-        self.page_label.setText(f"{self.current_index + 1} / {len(self.history)}")
+        self._set_content_style()
+        self.page_label.setText(f"{self.current_page + 1} / {len(self.pages)}")
 
     def _show_previous(self):
-        if self.current_index > 0:
-            self.current_index -= 1
+        if self.current_page > 0:
+            self.current_page -= 1
             self._display_current()
             self._update_buttons()
 
     def _show_next(self):
-        if self.current_index < len(self.history) - 1:
-            self.current_index += 1
+        if self.current_page < len(self.pages) - 1:
+            self.current_page += 1
             self._display_current()
             self._update_buttons()
 
     def _update_buttons(self):
-        self.prev_btn.setEnabled(self.current_index > 0)
-        self.next_btn.setEnabled(self.current_index < len(self.history) - 1)
+        self.prev_btn.setEnabled(self.current_page > 0)
+        self.next_btn.setEnabled(self.current_page < len(self.pages) - 1)
 
     def clear(self):
-        self.history.clear()
-        self.current_index = -1
+        self.pages.clear()
+        self.current_page = -1
         self._display_current()
         self._update_buttons()
 
     def set_font_size(self, size):
         self._update_font(size)
-
-    def update_last_answer(self, new_text: str):
-        """更新最后一个 answer 条目（用于流式更新）"""
-        color = "#81C784"  # answer 类型的颜色
-        formatted = f'<span style="color: {color};">{new_text}</span>'
-
-        # 如果 history 为空，添加新条目
-        if len(self.history) == 0:
-            self.history.append(formatted)
-            self.history_types.append("answer")
-        else:
-            # 查找最后一个 answer 类型的条目索引
-            found = False
-            for i in range(len(self.history_types) - 1, -1, -1):
-                if self.history_types[i] == "answer":
-                    # 更新该条目和类型
-                    self.history[i] = formatted
-                    found = True
-                    break
-
-            if not found:
-                # 没有找到 answer 条目，添加新条目
-                self.history.append(formatted)
-                self.history_types.append("answer")
-
-        # 更新显示
-        self._display_all()
-        # 滚动到底部
-        self._scroll_to_bottom()
 
     def enterEvent(self, event):
         """鼠标移入 - 更新按钮样式"""
