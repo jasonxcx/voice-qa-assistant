@@ -560,21 +560,11 @@ class OverlayWindow(QWidget):
         rect = self.rect()
 
         # 检查是否在左下角调节区域（增大调节区域到 40 像素）
-        bottom_left_rect = QRect(
-            rect.left(),
-            rect.bottom() - 40,
-            40,
-            40
-        )
+        bottom_left_rect = QRect(rect.left(), rect.bottom() - 20, 20, 20)
         in_bottom_left = bottom_left_rect.contains(global_mouse_pos)
 
         # 检查是否在右下角调节区域（增大调节区域到 40 像素）
-        bottom_right_rect = QRect(
-            rect.right() - 40,
-            rect.bottom() - 40,
-            40,
-            40
-        )
+        bottom_right_rect = QRect(rect.right() - 20, rect.bottom() - 20, 20, 20)
         in_bottom_right = bottom_right_rect.contains(global_mouse_pos)
 
         # 更新鼠标光标 - 优先显示 resize 光标
@@ -591,13 +581,8 @@ class OverlayWindow(QWidget):
             rect = self.rect()
             local_mouse_pos = event.pos()
 
-            # 检查左下角区域（增大到 40 像素）
-            bottom_left_rect = QRect(
-                rect.left(),
-                rect.bottom() - 40,
-                40,
-                40
-            )
+            # 检查左下角区域
+            bottom_left_rect = QRect(rect.left(), rect.bottom() - 20, 20, 20)
             if bottom_left_rect.contains(local_mouse_pos):
                 self._resizing = True
                 self._resize_from_corner = "bottom_left"
@@ -607,13 +592,8 @@ class OverlayWindow(QWidget):
                 event.accept()
                 return
 
-            # 检查右下角区域（增大到 40 像素）
-            bottom_right_rect = QRect(
-                rect.right() - 40,
-                rect.bottom() - 40,
-                40,
-                40
-            )
+            # 检查右下角区域
+            bottom_right_rect = QRect(rect.right() - 20, rect.bottom() - 20, 20, 20)
             if bottom_right_rect.contains(local_mouse_pos):
                 self._resizing = True
                 self._resize_from_corner = "bottom_right"
@@ -639,9 +619,9 @@ class OverlayWindow(QWidget):
             )
             rect = self.rect()
 
-            # 检查是否在调节区域内（底部 40 像素区域）
-            bottom_left_rect = QRect(rect.left(), rect.bottom() - 40, 40, 40)
-            bottom_right_rect = QRect(rect.right() - 40, rect.bottom() - 40, 40, 40)
+            # 检查是否在调节区域内
+            bottom_left_rect = QRect(rect.left(), rect.bottom() - 20, 20, 20)
+            bottom_right_rect = QRect(rect.right() - 20, rect.bottom() - 20, 20, 20)
 
             if bottom_left_rect.contains(local_mouse_pos) or bottom_right_rect.contains(local_mouse_pos):
                 # 在调节区域内，触发窗口的 resize 处理

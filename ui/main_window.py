@@ -933,6 +933,9 @@ class MainWindow(QMainWindow):
         # 先启动音频捕获（如果还没启动）
         if not self.audio_capture.is_running():
             self.audio_capture.start()
+        # 清空之前的音频缓冲区（避免收到模型加载期间收集的音频）
+        with self.audio_capture._audio_buffer_lock:
+            self.audio_capture._audio_buffer = []
         # 设置为手动模式并开始录音
         self.audio_capture.set_manual_mode(True)
         if self.audio_capture._recording:
