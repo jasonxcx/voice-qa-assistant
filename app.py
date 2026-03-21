@@ -62,7 +62,7 @@ def main():
     print("\n[1/5] 创建 Qt 应用...")
     app = QApplication(sys.argv)
     app.setApplicationName("实时问答助理")
-    app.setWindowIcon(QIcon("icon.ico"))
+    app.setWindowIcon(QIcon("ui/icon.ico"))
     app.setStyle("Fusion")
     print("  [OK] Qt 应用创建成功")
 
@@ -76,8 +76,7 @@ def main():
         sys.exit(1)
 
     print("\n[3/5] 创建音频捕获模块...")
-    print("  [Info] 首次运行会下载 Whisper 模型（约 500MB-1GB），请稍候...")
-    print("  [Info] 模型仅下载一次，后续运行会使用缓存")
+    print("  [Info] 首次运行会下载 Whisper 模型（约 500MB-1GB），仅下载一次，后续运行会使用缓存")
     try:
         audio_capture = AudioCapture(config)
         print("  [OK] 音频捕获模块创建成功")
@@ -107,13 +106,13 @@ def main():
     # 显示窗口
     print("\n" + "=" * 50)
     print("[OK] 程序启动成功!")
-    print("=" * 50)
     print("\n使用说明:")
     print("1. 在主窗口导入 Markdown 简历")
     print("2. 选择大模型模式（云端/本地）")
     print("3. 点击'开始监听'按钮")
     print("4. 字幕窗口将自动显示转录和回答")
-    print("\n按 Ctrl+C 或关闭窗口退出程序\n")
+    print("\n按 Ctrl+C 或关闭窗口退出程序")
+    print("=" * 50)
 
     # 注意：字幕窗口在启动时不显示，点击"开始监听"后才显示
     # overlay.show()  # ← 移除这行

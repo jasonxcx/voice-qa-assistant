@@ -122,18 +122,11 @@ class CaptionHistory(QWidget):
 
     def update_answer_streaming(self, answer_text: str, page_index: int = None):
         """流式更新回答 - 更新当前页的回答"""
-        print(f"[DEBUG] update_answer_streaming called: answer_text len={len(answer_text)}, page_index={page_index}, current_page={self.current_page}", flush=True)
         target_page = page_index if page_index is not None else self.current_page
-        print(f"[DEBUG] update_answer_streaming: target_page={target_page}, pages_count={len(self.pages)}", flush=True)
         if target_page < 0 or target_page >= len(self.pages):
             print(f"[DEBUG] update_answer_streaming: target_page out of range", flush=True)
             return
-
-        prev_answer = self.pages[target_page].get("answer", "")[:50]
-        print(f"[DEBUG] update_answer_streaming: 更新前 pages[{target_page}] answer='{prev_answer}...'", flush=True)
         self.pages[target_page]["answer"] = answer_text
-        new_answer = self.pages[target_page].get("answer", "")[:50]
-        print(f"[DEBUG] update_answer_streaming: 更新后 pages[{target_page}] answer='{new_answer}...'", flush=True)
         self._display_current()
 
     def add_caption(self, text, caption_type="answer"):

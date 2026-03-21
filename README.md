@@ -10,6 +10,26 @@
 - ✅ 文本注入：导入 Markdown 文本知识库，让 AI 更懂你
 - ✅ 透明字幕：PyQt5 叠加窗口，不遮挡视频
 
+## 项目结构
+
+```
+interview-helper/
+├── app.py                # 主程序入口
+├── ui/
+│   ├── main_window.py    # 主窗口
+│   ├── overlay_window.py # 字幕窗口
+│   └── styles.py         # 样式表
+├── core/
+│   ├── audio_capture.py  # 音频捕获
+│   ├── llm_client.py     # 大模型客户端
+│   ├── resume_parser.py  # 简历解析
+│   ├── logger.py         # 日志管理
+│   └── config.py         # 配置管理
+├── requirements.txt
+├── config.yaml
+└── README.md
+```
+
 ## 快速开始
 
 ### 1. 环境配置
@@ -57,9 +77,9 @@ python app.py
 ## 使用说明
 
 1. **导入简历**: 点击"选择简历"按钮，选择 Markdown 格式的简历文件
-2. **选择模式**: 选择云端 (Qwen) 或本地 (Ollama) 模式
-3. **开始监听**: 点击"开始"按钮，程序开始监听音频
-4. **查看字幕**: 屏幕底部会显示转录问题和 AI 回答关键点
+2. **模型配置**: 配置 LLM 模型和 STT 模型
+3. **开始**: 点击"加载模型"按钮，屏幕底部会显示字幕窗口，可以手动点击按钮开始监听音频
+4. **查看字幕**: 点击结束监听按钮后程序会转录问题和 AI 回答关键点
 
 ## 故障排除
 
@@ -70,27 +90,26 @@ python app.py
 **无法捕获音频:**
 - 确认输入设备
 - 检查 Windows 声音输入/输出设备设置
-- 确认 `config.yaml` 中的 `input_device_index` 正确
 
 **STT 延迟高:**
-- 确认 GPU 驱动已安装
+- 确认 GPU 驱动已安装、确认安装 cuda
 - 尝试使用更小的 Whisper 模型 (base/tiny)
 
-## 项目结构
+## 注意事项
 
-```
-interview-helper/
-├── app.py                # 主程序入口
-├── ui/
-│   ├── main_window.py    # 主窗口
-│   ├── overlay_window.py # 字幕窗口
-│   └── styles.py         # 样式表
-├── core/
-│   ├── audio_capture.py  # 音频捕获
-│   ├── llm_client.py     # 大模型客户端
-│   ├── resume_parser.py  # 简历解析
-│   └── config.py         # 配置管理
-├── requirements.txt
-├── config.yaml
-└── README.md
-```
+在线会议等软件的屏幕共享功能（如果你不想让别人看到本工具）：
+- UI界面：使用[shalzuth/WindowSharingHider](https://github.com/shalzuth/WindowSharingHider)，我放在 [ui/WindowSharingHider.exe](ui/WindowSharingHider.exe) 目录中，可以直接点开使用。
+- 任务栏：直接使用windows自带的任务栏隐藏功能，或者干脆把任务栏移到第二个显示器
+
+## 免责声明 / Disclaimer
+
+本项目仅供技术学习与研究交流之用，严禁用于以下用途：
+- 任何形式的求职面试作弊行为
+- 侵犯他人隐私或商业秘密
+- 违反当地法律法规的行为
+
+使用者应对自身行为负全部法律责任，作者不承担任何因滥用本项目导致的直接或间接后果。使用即表示您已阅读并同意本声明。
+
+## 许可证
+本项目采用 [Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0)](https://creativecommons.org/licenses/by-nc/4.0/) 许可证进行开源。  
+这意味着您可以自由地共享和修改本项目的内容，但**仅限于非商业用途**。  
