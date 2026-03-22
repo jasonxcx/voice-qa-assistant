@@ -10,7 +10,7 @@ import os
 import re
 import shutil
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
 from PyQt5.QtCore import pyqtSignal, QObject
 
 from core.logger import log_system, log_stt
@@ -49,6 +49,120 @@ class AudioCapture(QObject):
         self._max_queue_size = 30  # 最多保存 30 秒的音频块
         self._audio_buffer = []  # 录音音频缓冲区（实例变量以便外部访问）
         self._audio_buffer_lock = threading.Lock()  # 保护 _audio_buffer 的锁
+        self._auto_volume_threshold = float(self.config.get("stt.auto.volume_threshold", 0.015))
+        self._auto_pause_seconds = float(self.config.get("stt.auto.pause_seconds", 0.8))
+        self._auto_min_sentence_seconds = max(2.0, float(self.config.get("stt.auto.min_sentence_seconds", 2.0)))
+        self._auto_max_sentence_seconds = max(
+            self._auto_min_sentence_seconds + 0.5,
+            float(self.config.get("stt.auto.max_sentence_seconds", 8.0)),
+        )
+        self._auto_voice_ratio = float(self.config.get("stt.auto.voice_ratio", 3.0))
+        self._auto_silence_ratio = float(self.config.get("stt.auto.silence_ratio", 1.8))
+        self._auto_noise_alpha = float(self.config.get("stt.auto.noise_alpha", 0.08))
+        self._auto_resume_voice_chunks = max(1, int(self.config.get("stt.auto.resume_voice_chunks", 2)))
+        self._auto_sentence_buffer: List[np.ndarray] = []
+        self._auto_in_speech = False
+        self._auto_last_voice_ts = 0.0
+        self._auto_sentence_start_ts = 0.0
+        self._auto_noise_ema = max(0.001, self._auto_volume_threshold * 0.4)
+        self._auto_silence_chunks = 0
+        self._auto_voice_chunks = 0
+
+    def _reset_auto_segment_state(self):
+        """重置自动分句状态"""
+        self._auto_sentence_buffer = []
+        self._auto_in_speech = False
+        self._auto_last_voice_ts = 0.0
+        self._auto_sentence_start_ts = 0.0
+        self._auto_silence_chunks = 0
+        self._auto_voice_chunks = 0
+
+    def _estimate_thresholds(self, volume: float) -> tuple[float, float]:
+        """根据噪声底估计语音/静音阈值（迟滞）"""
+        # 仅在非语音段时更新噪声底，避免语音把噪声底抬高
+        if not self._auto_in_speech:
+            alpha = min(0.5, max(0.001, self._auto_noise_alpha))
+            self._auto_noise_ema = (1.0 - alpha) * self._auto_noise_ema + alpha * volume
+
+        noise_floor = max(0.0005, self._auto_noise_ema)
+        start_threshold = max(self._auto_volume_threshold, noise_floor * self._auto_voice_ratio)
+        keep_threshold = max(noise_floor * self._auto_silence_ratio, self._auto_volume_threshold * 0.9)
+        return start_threshold, keep_threshold
+
+    @staticmethod
+    def _buffer_duration_seconds(audio_buffer, sample_rate: int, channels: int) -> float:
+        """计算缓冲区音频时长（秒）"""
+        if not audio_buffer or sample_rate <= 0:
+            return 0.0
+        safe_channels = max(1, int(channels or 1))
+        sample_count = sum(len(chunk) for chunk in audio_buffer)
+        return sample_count / float(sample_rate * safe_channels)
+
+    def _finalize_auto_sentence(self, sample_rate: int, channels: int, reason: str = "pause"):
+        """自动模式：完成一个句子并触发转录"""
+        if not self._auto_sentence_buffer:
+            self._reset_auto_segment_state()
+            return
+
+        buffer_copy = list(self._auto_sentence_buffer)
+        duration = self._buffer_duration_seconds(buffer_copy, sample_rate, channels)
+        self._reset_auto_segment_state()
+
+        if duration < self._auto_min_sentence_seconds:
+            log_system(
+                f"自动分句丢弃短句：{duration:.2f}s < {self._auto_min_sentence_seconds:.2f}s (reason={reason})",
+                logging.DEBUG,
+            )
+            return
+
+        log_system(f"自动分句触发转录：{duration:.2f}s (reason={reason})", logging.INFO)
+        threading.Thread(
+            target=self._transcribe_buffer,
+            args=(buffer_copy, sample_rate, channels),
+            daemon=True,
+        ).start()
+
+    def _handle_auto_mode_chunk(self, audio_data: np.ndarray, volume: float, sample_rate: int, channels: int):
+        """自动模式：按音量和停顿进行分句"""
+        now = time.monotonic()
+        start_threshold, keep_threshold = self._estimate_thresholds(volume)
+        chunk_duration = len(audio_data) / float(max(1, sample_rate * max(1, channels)))
+
+        if not self._auto_in_speech:
+            if volume >= start_threshold:
+                self._auto_in_speech = True
+                self._auto_sentence_start_ts = now
+                self._auto_last_voice_ts = now
+                self._auto_sentence_buffer = [audio_data.copy()]
+                self._auto_silence_chunks = 0
+                self._auto_voice_chunks = 1
+            return
+
+        # 已在句内：始终保留 chunk，避免切分后丢词
+        self._auto_sentence_buffer.append(audio_data.copy())
+        sentence_elapsed = now - self._auto_sentence_start_ts if self._auto_sentence_start_ts else 0.0
+
+        if volume >= keep_threshold:
+            self._auto_voice_chunks += 1
+            # 需要连续多个有声块才恢复“有声状态”，降低噪声尖峰干扰
+            if self._auto_voice_chunks >= self._auto_resume_voice_chunks:
+                self._auto_silence_chunks = 0
+                self._auto_last_voice_ts = now
+            return
+
+        # 静音块：重置有声连续计数，累积静音时长
+        self._auto_voice_chunks = 0
+        self._auto_silence_chunks += 1
+        silence_elapsed = self._auto_silence_chunks * chunk_duration
+
+        # 满足停顿立刻切句；不再等下一句开口
+        if silence_elapsed >= self._auto_pause_seconds:
+            self._finalize_auto_sentence(sample_rate, channels, reason="pause")
+            return
+
+        # 兜底：极端环境下停顿不明显时，按最大句长强制截断避免跨句粘连
+        if sentence_elapsed >= self._auto_max_sentence_seconds:
+            self._finalize_auto_sentence(sample_rate, channels, reason="max_duration")
 
     def _init_stt_model(self):
         """初始化 Faster-Whisper 模型"""
@@ -197,7 +311,14 @@ class AudioCapture(QObject):
 
     def set_manual_mode(self, enabled: bool):
         """设置手动模式"""
+        if self._manual_mode != enabled:
+            self._reset_auto_segment_state()
         self._manual_mode = enabled
+        if not enabled:
+            # 自动模式不依赖 _recording 标记
+            self._recording = False
+            with self._audio_buffer_lock:
+                self._audio_buffer = []
         mode_str = "手动" if enabled else "自动"
         print(f"[AudioCapture] 转录模式：{mode_str}", flush=True)
         log_system(f"转录模式：{mode_str}", logging.INFO)
@@ -287,9 +408,8 @@ class AudioCapture(QObject):
                             # 手动模式不限制缓冲区大小，记录从开始到停止的所有音频
                             # 注意：长时间录音可能导致内存占用较高
                     else:
-                        # 自动模式：始终收集音频
-                        with self._audio_buffer_lock:
-                            self._audio_buffer.append(audio_data)
+                        # 自动模式：按停顿分句并即时触发转录
+                        self._handle_auto_mode_chunk(audio_data, volume, sample_rate, channels)
 
                     # 始终发送音量更新（只要在运行中）
                     self.volume_update.emit(min(1.0, volume * 5))
@@ -316,20 +436,24 @@ class AudioCapture(QObject):
                                 daemon=True
                             ).start()
 
-            # 如果循环结束时还在录音，转录剩余缓冲区
-            with self._audio_buffer_lock:
-                if self._audio_buffer:
-                    sample_rate = getattr(self, '_sample_rate', 16000)
-                    channels = getattr(self, '_channels', 2)
-                    buffer_copy = self._audio_buffer.copy()
-                    print(f"[AudioCapture] 录音循环结束，转录剩余缓冲区 (在线程中)", flush=True)
-                    # 在独立线程中执行转录，避免阻塞主线程
-                    threading.Thread(
-                        target=self._transcribe_buffer,
-                        args=(buffer_copy, sample_rate, channels),
-                        daemon=True
-                    ).start()
-                self._audio_buffer = []  # 清空缓冲区
+            # 循环结束时处理剩余缓冲区
+            sample_rate = getattr(self, '_sample_rate', 16000)
+            channels = getattr(self, '_channels', 2)
+            if self._manual_mode:
+                with self._audio_buffer_lock:
+                    if self._audio_buffer:
+                        buffer_copy = self._audio_buffer.copy()
+                        print(f"[AudioCapture] 录音循环结束，转录剩余缓冲区 (在线程中)", flush=True)
+                        # 在独立线程中执行转录，避免阻塞主线程
+                        threading.Thread(
+                            target=self._transcribe_buffer,
+                            args=(buffer_copy, sample_rate, channels),
+                            daemon=True
+                        ).start()
+                    self._audio_buffer = []  # 清空缓冲区
+            else:
+                # 自动模式退出时，尽量把最后一句也结算
+                self._finalize_auto_sentence(sample_rate, channels, reason="stop")
 
             log_system("录音循环结束", logging.INFO)
             self.recording_stopped.emit()

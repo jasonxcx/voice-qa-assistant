@@ -407,6 +407,7 @@ class MainWindow(QMainWindow):
         # 连接 overlay 的监听控制信号
         self.overlay.listeningStarted.connect(self._on_overlay_listening_started)
         self.overlay.listeningStopped.connect(self._on_overlay_listening_stopped)
+        self.overlay.transcriptionModeChanged.connect(self._on_overlay_transcription_mode_changed)
 
         # 连接 LLM 信号到槽函数
         self.token_signal.connect(self._on_token_update)
@@ -419,6 +420,7 @@ class MainWindow(QMainWindow):
 
         self.caption_queue = []
         self.current_volume = 0.0
+        self._on_overlay_transcription_mode_changed(self.overlay.is_manual_transcription_mode())
     
     def _select_resume(self):
         """选择简历文件"""
@@ -958,7 +960,12 @@ class MainWindow(QMainWindow):
         self.caption_toggle_btn.setText("📑 隐藏")
         # 启用 overlay 的监听按钮（模型已加载）
         if hasattr(self, "audio_capture") and self.audio_capture:
-            self.overlay.set_listen_button_enabled(True)
+            self.overlay.set_listen_button_enabled(self.overlay.is_manual_transcription_mode())
+            if not self.overlay.is_manual_transcription_mode():
+                # 自动模式：模型就绪后立即进入自动分句监听
+                self.audio_capture.set_manual_mode(False)
+                self.status_label.setText("● 自动转录中...")
+                self.status_label.setStyleSheet(f"color: {STATUS_COLORS['listening']};")
 
     def _on_model_unloaded(self):
         """模型已卸载 - 更新 UI 状态"""
@@ -990,6 +997,8 @@ class MainWindow(QMainWindow):
     
     def _on_overlay_listening_started(self):
         """overlay 开始监听 - 启动手动录音"""
+        if not self.overlay.is_manual_transcription_mode():
+            return
         # 检查模型是否是否已加载
         if self.is_model_loading or self.audio_capture.stt_model is None:
             QMessageBox.warning(self, "提示", "模型正在加载中，请稍后再试")
@@ -1014,10 +1023,29 @@ class MainWindow(QMainWindow):
 
     def _on_overlay_listening_stopped(self):
         """overlay 停止监听 - 停止录音并转录"""
+        if not self.overlay.is_manual_transcription_mode():
+            return
         # 停止录音（会自动触发转录）
         self.audio_capture.stop_recording()
         self.status_label.setText("● 已停止")
         self.status_label.setStyleSheet(f"color: {STATUS_COLORS['idle']};")
+
+    def _on_overlay_transcription_mode_changed(self, manual_mode: bool):
+        """字幕窗口切换手动/自动转录模式"""
+        self.audio_capture.set_manual_mode(manual_mode)
+        self.overlay.set_listen_button_enabled(self.audio_capture.is_running() and manual_mode)
+
+        if manual_mode:
+            if self.audio_capture._recording:
+                self.audio_capture.stop_recording()
+            self.status_label.setText("● 手动转录模式")
+            self.status_label.setStyleSheet(f"color: {STATUS_COLORS['idle']};")
+            return
+
+        # 自动模式：如果模型已加载，立即生效并持续分句
+        if self.audio_capture.is_running() and self.audio_capture.stt_model is not None:
+            self.status_label.setText("● 自动转录中...")
+            self.status_label.setStyleSheet(f"color: {STATUS_COLORS['listening']};")
 
     def _update_volume_display(self):
         """更新音量显示"""
@@ -1093,7 +1121,6 @@ class MainWindow(QMainWindow):
     @pyqtSlot(str, int)
     def _on_token_update(self, token: str, page_index: int):
         """处理LLM token更新（在主线程中调用）"""
-        print(f"[DEBUG] _on_token_update: token='{token[:20]}...', page_index={page_index}", flush=True)
         # 获取当前显示的文本并追加新token
         current_text = self.overlay.caption_history.pages[page_index]["answer"] if 0 <= page_index < len(self.overlay.caption_history.pages) else ""
         new_text = current_text + token

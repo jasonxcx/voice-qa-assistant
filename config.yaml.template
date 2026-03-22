@@ -33,9 +33,29 @@ stt:
     mirror: https://hf-mirror.com/
     # 可选，自定义下载缓存目录；留空则使用 huggingface 默认缓存
     cache_dir: ""
+  auto:
+    # 自动分句模式：RMS 音量阈值（越大越不敏感）
+    volume_threshold: 0.015
+    # 起始语音阈值 = max(volume_threshold, 噪声底 * voice_ratio)
+    voice_ratio: 3.0
+    # 语音保持阈值 = max(噪声底 * silence_ratio, volume_threshold * 0.6)
+    silence_ratio: 1.8
+    # 噪声底 EMA 更新系数（越大越灵敏）
+    noise_alpha: 0.08
+    # 连续静音达到该时长后判定为一句结束
+    pause_seconds: 0.8
+    # 最短句长，小于 2 秒不触发转录
+    min_sentence_seconds: 2.0
+    # 最长句长兜底，超过后强制切分，避免跨句粘连
+    max_sentence_seconds: 8.0
+    # 从“静音中”恢复为“有声中”所需的连续有声块数量（抗噪声尖峰）
+    resume_voice_chunks: 2
 
 # UI 配置
 ui:
   overlay_height: 500
   overlay_width_ratio: 0.85
   font_size: 12
+  transcription:
+    # True=手动点“开始监听”；False=自动分句转录
+    manual_mode: true

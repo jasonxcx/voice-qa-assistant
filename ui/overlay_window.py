@@ -325,6 +325,7 @@ class OverlayWindow(QWidget):
     # 监听控制信号
     listeningStarted = pyqtSignal()
     listeningStopped = pyqtSignal()
+    transcriptionModeChanged = pyqtSignal(bool)  # True=手动, False=自动
     sizes = [8, 12, 16, 20, 24, 28, 32, 36, 40]
 
     def __init__(self, config):
@@ -336,6 +337,7 @@ class OverlayWindow(QWidget):
         self._resize_start_pos = QPoint()  # 调节开始时的鼠标位置
         self._resize_start_geometry = (0, 0, 0, 0)  # (x, y, width, height)
         self._listening = False  # 监听状态
+        self._manual_transcription_mode = bool(self.config.get("ui.transcription.manual_mode", True))
         self._init_ui()
         self._setup_window_flags()
         self.setMouseTracking(True)
@@ -420,6 +422,12 @@ class OverlayWindow(QWidget):
         self.font_up_btn.clicked.connect(self._on_font_up_clicked)
         self.font_up_btn.setStyleSheet(self._action_button_stylesheet())
 
+        self.mode_btn = QPushButton()
+        self.mode_btn.setToolTip("切换手动/自动转录模式")
+        self.mode_btn.setFixedHeight(28)
+        self.mode_btn.clicked.connect(self._on_mode_toggled)
+        self.mode_btn.setStyleSheet(self._action_button_stylesheet())
+
         # 监听控制按钮（合并开始/停止为一个按钮）
         self.listen_btn = QPushButton("▶ 开始监听")
         self.listen_btn.setToolTip("开始/停止监听音频")
@@ -437,6 +445,7 @@ class OverlayWindow(QWidget):
         button_layout.addWidget(self.hide_btn)
         button_layout.addWidget(self.font_down_btn)
         button_layout.addWidget(self.font_up_btn)
+        button_layout.addWidget(self.mode_btn)
         button_layout.addWidget(self.listen_btn)
         button_layout.addWidget(self.resize_label)
         button_layout.addStretch()
@@ -458,6 +467,7 @@ class OverlayWindow(QWidget):
         shadow.setColor(QColor(0, 0, 0, 128))
         shadow.setOffset(0, 4)
         self.setGraphicsEffect(shadow)
+        self._apply_transcription_mode_ui()
 
     def _hide_button_stylesheet(self):
         """隐藏按钮样式 - 灰色"""
@@ -708,9 +718,36 @@ class OverlayWindow(QWidget):
     def set_listen_button_enabled(self, enabled: bool):
         """设置监听按钮的启用状态"""
         print(f"[Debug] set_listen_button_enabled({enabled})", flush=True)
-        self.listen_btn.setEnabled(enabled)
+        self.listen_btn.setEnabled(enabled and self._manual_transcription_mode)
         # 重新设置样式以确保样式正确应用
         self.listen_btn.setStyleSheet(self._listen_button_stylesheet())
+
+    def is_manual_transcription_mode(self) -> bool:
+        return self._manual_transcription_mode
+
+    def _apply_transcription_mode_ui(self):
+        """根据手动/自动模式刷新 UI"""
+        if self._manual_transcription_mode:
+            self.mode_btn.setText("模式：手动")
+            self.listen_btn.setVisible(True)
+        else:
+            self.mode_btn.setText("模式：自动")
+            self.listen_btn.setVisible(False)
+
+    def _on_mode_toggled(self):
+        """切换手动/自动转录模式"""
+        self._manual_transcription_mode = not self._manual_transcription_mode
+        self.config.set("ui.transcription.manual_mode", self._manual_transcription_mode)
+
+        # 从手动切到自动时，先停止手动监听，避免状态残留
+        if not self._manual_transcription_mode and self._listening:
+            self.listeningStopped.emit()
+            self._listening = False
+            self.listen_btn.setText("▶ 开始监听")
+            self.listen_btn.setStyleSheet(self._listen_button_stylesheet())
+
+        self._apply_transcription_mode_ui()
+        self.transcriptionModeChanged.emit(self._manual_transcription_mode)
 
     def _on_listen_toggled(self):
         """监听按钮切换"""
