@@ -6,6 +6,10 @@ import pyaudiowpatch as pyaudio
 import numpy as np
 import logging
 import time
+import os
+import re
+import shutil
+from pathlib import Path
 from typing import Optional
 from PyQt5.QtCore import pyqtSignal, QObject
 
@@ -26,6 +30,10 @@ class AudioCapture(QObject):
     model_loading_started = pyqtSignal()   # 模型开始加载
     model_loaded = pyqtSignal()            # 模型加载完成
     model_unloaded = pyqtSignal()          # 模型已卸载
+    model_download_started = pyqtSignal(str)
+    model_download_progress = pyqtSignal(float, str)
+    model_download_finished = pyqtSignal()
+    model_download_failed = pyqtSignal(str)
 
     def __init__(self, config):
         super().__init__()
@@ -46,40 +54,102 @@ class AudioCapture(QObject):
         """初始化 Faster-Whisper 模型"""
         try:
             from faster_whisper import WhisperModel
+            from huggingface_hub import snapshot_download
+            from tqdm.auto import tqdm as _tqdm
 
-            model_name = self.config.get('stt', {}).get('model', 'tiny')
-            device = self.config.get('stt.local', {}).get('device', 'cpu')
+            model_name = self.config.get("stt.model", "tiny")
+            device = self.config.get("stt.local.device", "cpu")
+            download_mirror = (self.config.get("stt.download.mirror", "") or "").strip()
+            local_model_path = (self.config.get("stt.local.model_path", "") or "").strip()
+            cache_dir = (self.config.get("stt.download.cache_dir", "") or "").strip() or None
 
-            # 映射设备名称：gpu -> cuda (Faster-Whisper 使用 cuda 而不是 gpu)
-            if device.lower() == 'gpu':
-                device = 'cuda'
+            if device.lower() == "gpu":
+                device = "cuda"
 
-            # 根据设备选择计算类型
-            if device == 'cuda':
-                compute_type = 'float16'  # GPU 使用 float16 加速
-            elif device == 'cpu':
-                compute_type = 'float32'  # CPU 使用 float32
+            if device == "cuda":
+                compute_type = "float16"
+            elif device == "cpu":
+                compute_type = "float32"
             else:
-                compute_type = 'int8'  # 其他设备使用 int8
-            
-            log_system(f"加载 Faster-Whisper 模型：{model_name} (device={device}, compute_type={compute_type})", logging.INFO)
+                compute_type = "int8"
 
-            # 发射模型加载开始信号
+            log_system(f"加载 Faster-Whisper 模型：{model_name} (device={device}, compute_type={compute_type})", logging.INFO)
             self.model_loading_started.emit()
 
+            model_source = model_name
+            if local_model_path:
+                model_source = local_model_path
+            else:
+                repo_map = {
+                    "tiny": "Systran/faster-whisper-tiny",
+                    "base": "Systran/faster-whisper-base",
+                    "small": "Systran/faster-whisper-small",
+                    "medium": "Systran/faster-whisper-medium",
+                    "large-v1": "Systran/faster-whisper-large-v1",
+                    "large-v2": "Systran/faster-whisper-large-v2",
+                    "large-v3": "Systran/faster-whisper-large-v3",
+                    "large": "Systran/faster-whisper-large-v3",
+                }
+                repo_id = repo_map.get((model_name or "").strip().lower())
+                if repo_id:
+                    self._cancel_download = False
+                    self.model_download_started.emit(repo_id)
+                    start_ts = time.time()
+
+                    class SignalTqdm(_tqdm):
+                        def update(inner_self, n=1):
+                            if self._cancel_download:
+                                raise RuntimeError("用户取消下载")
+                            super().update(n)
+                            done = int(inner_self.n or 0)
+                            total = int(inner_self.total or 0)
+                            progress = (done * 100.0 / total) if total > 0 else 0.0
+                            elapsed = max(1e-6, time.time() - start_ts)
+                            speed = done / elapsed
+                            self.model_download_progress.emit(min(100.0, progress), f"{done}/{max(total,1)} files, {speed:.2f} files/s")
+
+                    download_kwargs = {
+                        "repo_id": repo_id,
+                        "local_dir": cache_dir,
+                        "resume_download": True,
+                        "tqdm_class": SignalTqdm,
+                    }
+                    if download_mirror:
+                        endpoint = download_mirror.rstrip("/")
+                        download_kwargs["endpoint"] = endpoint
+                        log_system(f"STT 下载镜像生效：{endpoint}", logging.INFO)
+
+                    model_source = snapshot_download(**download_kwargs)
+                    model_bin = Path(model_source) / "model.bin"
+                    if not model_bin.exists():
+                        raise RuntimeError(f"模型下载不完整：{model_source} 缺少 model.bin")
+                    self.model_download_progress.emit(100.0, "完成")
+                    self.model_download_finished.emit()
+
             self.stt_model = WhisperModel(
-                model_size_or_path=model_name,
+                model_size_or_path=model_source,
                 device=device,
                 compute_type=compute_type,
             )
             log_system("Faster-Whisper 模型加载成功", logging.INFO)
-
-            # 发射模型加载完成信号
             self.model_loaded.emit()
 
         except Exception as e:
+            self.model_download_failed.emit(str(e))
             log_system(f"加载 STT 模型失败：{e}", logging.ERROR)
             raise
+
+    @staticmethod
+    def _extract_bad_snapshot_path(error_text: str) -> Optional[str]:
+        match = re.search(r"model '([^']+)'", error_text or "")
+        return match.group(1) if match else None
+
+    @staticmethod
+    def _remove_bad_snapshot(snapshot_path: str):
+        try:
+            shutil.rmtree(snapshot_path, ignore_errors=True)
+        except Exception:
+            pass
 
     def start_monitoring(self):
         """启动音量监控（独立于录音）"""
@@ -541,3 +611,7 @@ class AudioCapture(QObject):
     def is_running(self) -> bool:
         """是否正在运行"""
         return self._running
+
+    def request_cancel_download(self):
+        """请求取消模型下载"""
+        self._cancel_download = True

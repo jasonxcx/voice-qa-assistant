@@ -24,6 +24,7 @@ from PyQt5.QtWidgets import (
     QLineEdit,
     QMainWindow,
     QMessageBox,
+    QProgressDialog,
     QPushButton,
     QTextEdit,
     QVBoxLayout,
@@ -53,6 +54,7 @@ class MainWindow(QMainWindow):
         self.resume_data: Optional[Dict[str, Any]] = None
         self.audio_devices: List[Dict] = []
         self.is_model_loading = False
+        self._stt_download_canceled = False
         
         self._init_ui()
         print("[Debug] _init_ui 完成", flush=True)
@@ -394,6 +396,10 @@ class MainWindow(QMainWindow):
         self.audio_capture.model_loading_started.connect(self._on_model_loading_started)
         self.audio_capture.model_loaded.connect(self._on_model_loaded)
         self.audio_capture.model_unloaded.connect(self._on_model_unloaded)
+        self.audio_capture.model_download_started.connect(self._on_model_download_started)
+        self.audio_capture.model_download_progress.connect(self._on_model_download_progress)
+        self.audio_capture.model_download_finished.connect(self._on_model_download_finished)
+        self.audio_capture.model_download_failed.connect(self._on_model_download_failed)
 
         # 连接 overlay 窗口的显示/隐藏信号
         self.overlay.visibilityChanged.connect(self._on_overlay_visibility_changed)
@@ -861,6 +867,7 @@ class MainWindow(QMainWindow):
     def _on_model_loading_started(self):
         """模型开始加载 - 显示准备中状态"""
         self.is_model_loading = True
+        self._stt_download_canceled = False
         self.start_btn.setText("⏳ 准备中...")
         self.start_btn.setStyleSheet("""
             QPushButton {
@@ -880,11 +887,70 @@ class MainWindow(QMainWindow):
         self.start_btn.setEnabled(False)
         self.status_label.setText("● 模型加载中...")
         self.status_label.setStyleSheet("color: #9E9E9E;")
-    
+        self._show_download_dialog()
+
+    def _show_download_dialog(self):
+        if self._stt_download_canceled:
+            return
+        if hasattr(self, "_stt_download_dialog") and self._stt_download_dialog:
+            self._stt_download_dialog.show()
+            return
+        dialog = QProgressDialog("正在准备 STT 模型...", "取消下载", 0, 100, self)
+        dialog.setWindowTitle("STT 模型下载")
+        dialog.setAutoClose(False)
+        dialog.setAutoReset(False)
+        dialog.setMinimumDuration(0)
+        dialog.setValue(0)
+        dialog.canceled.connect(self._on_stt_download_canceled)
+        dialog.show()
+        self._stt_download_dialog = dialog
+
+    def _on_model_download_started(self, repo_id: str):
+        if self._stt_download_canceled:
+            return
+        self._show_download_dialog()
+        self._stt_download_dialog.setLabelText(
+            f"首次使用需要下载模型：{repo_id}\n提示：大文件下载阶段进度可能短时不变化。"
+        )
+        self._stt_download_dialog.setValue(0)
+
+    def _on_model_download_progress(self, progress: float, speed_text: str):
+        if self._stt_download_canceled:
+            return
+        self._show_download_dialog()
+        self._stt_download_dialog.setValue(int(progress))
+        self._stt_download_dialog.setLabelText(
+            f"正在下载 STT 模型... {progress:.1f}% ({speed_text})\n大文件下载时百分比可能暂时不变。"
+        )
+
+    def _on_model_download_finished(self):
+        if hasattr(self, "_stt_download_dialog") and self._stt_download_dialog:
+            self._stt_download_dialog.setValue(100)
+            self._stt_download_dialog.setLabelText("STT 模型下载完成，正在加载...")
+            self._stt_download_dialog.hide()
+        self._stt_download_canceled = False
+
+    def _on_model_download_failed(self, error_msg: str):
+        if hasattr(self, "_stt_download_dialog") and self._stt_download_dialog:
+            self._stt_download_dialog.hide()
+        if self._stt_download_canceled:
+            self._stt_download_canceled = False
+            return
+        QMessageBox.warning(self, "STT 模型下载失败", f"请检查网络或镜像配置。\n{error_msg}")
+
+    def _on_stt_download_canceled(self):
+        self._stt_download_canceled = True
+        if hasattr(self, "audio_capture") and self.audio_capture:
+            self.audio_capture.request_cancel_download()
+        if hasattr(self, "_stt_download_dialog") and self._stt_download_dialog:
+            self._stt_download_dialog.setLabelText("正在取消下载，请稍候...")
+
     def _on_model_loaded(self):
         """模型加载完成 - 更新为监听中状态"""
         self.is_model_loading = False
         log_system("模型加载完成", logging.INFO)
+        if hasattr(self, "_stt_download_dialog") and self._stt_download_dialog:
+            self._stt_download_dialog.hide()
         self._update_ui_state()  # 恢复正常状态
         # 字幕窗口会在点击"开始监听"按钮，模型加载完成后显示
         self.overlay.show()
