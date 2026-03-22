@@ -17,11 +17,11 @@ from PyQt5.QtGui import QFont, QColor, QCursor
 from collections import deque
 
 try:
-    from pynput import keyboard
-    HAS_PYNPUT = True
+    import keyboard
+    HAS_KEYBOARD = True
 except ImportError:
     keyboard = None
-    HAS_PYNPUT = False
+    HAS_KEYBOARD = False
 
 
 class CaptionHistory(QWidget):
@@ -204,16 +204,24 @@ class CaptionHistory(QWidget):
         self.page_label.setText(f"{self.current_page + 1} / {len(self.pages)}")
 
     def _show_previous(self):
+        print(f"[CaptionHistory] _show_previous 被调用，current_page={self.current_page}, pages={len(self.pages)}", flush=True)
         if self.current_page > 0:
             self.current_page -= 1
             self._display_current()
             self._update_buttons()
+            print(f"[CaptionHistory] 已翻到上一页，current_page={self.current_page}", flush=True)
+        else:
+            print("[CaptionHistory] 已经是第一页，无法翻页", flush=True)
 
     def _show_next(self):
+        print(f"[CaptionHistory] _show_next 被调用，current_page={self.current_page}, pages={len(self.pages)}", flush=True)
         if self.current_page < len(self.pages) - 1:
             self.current_page += 1
             self._display_current()
             self._update_buttons()
+            print(f"[CaptionHistory] 已翻到下一页，current_page={self.current_page}", flush=True)
+        else:
+            print("[CaptionHistory] 已经是最后一页，无法翻页", flush=True)
 
     def _update_buttons(self):
         self.prev_btn.setEnabled(self.current_page > 0)
@@ -242,8 +250,9 @@ class DragBar(QWidget):
 
     double_clicked = pyqtSignal()
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, config=None):
         super().__init__(parent)
+        self._config = config
         self._dragging = False
         self._drag_position = QPoint()
         self._drag_started = False
@@ -267,10 +276,11 @@ class DragBar(QWidget):
     def _update_style(self):
         """更新样式"""
         alpha = 51 if self._mouse_inside else 30
+        border_radius = self._config.overlay_border_radius if self._config else 12
         self.setStyleSheet(f"""
             background-color: rgba(255, 255, 255, {alpha});
-            border-top-left-radius: 12px;
-            border-top-right-radius: 12px;
+            border-top-left-radius: {border_radius}px;
+            border-top-right-radius: {border_radius}px;
         """)
 
     def mousePressEvent(self, event):
@@ -332,7 +342,8 @@ class OverlayWindow(QWidget):
     # 监听控制信号
     listeningStarted = pyqtSignal()
     listeningStopped = pyqtSignal()
-    transcriptionModeChanged = pyqtSignal(bool)  # True=手动, False=自动
+    transcriptionModeChanged = pyqtSignal(bool)  # True=手动，False=自动
+    listeningToggled = pyqtSignal()  # 全局快捷键切换监听信号
     sizes = [8, 12, 16, 20, 24, 28, 32, 36, 40]
 
     def __init__(self, config):
@@ -381,7 +392,7 @@ class OverlayWindow(QWidget):
 
 
         # 1. 顶部拖动条
-        self.drag_bar = DragBar(self)
+        self.drag_bar = DragBar(self, self.config)
         self.drag_bar.double_clicked.connect(self._on_drag_bar_double_click)
         main_layout.addWidget(self.drag_bar)
 
@@ -565,24 +576,84 @@ class OverlayWindow(QWidget):
         self.setFocusPolicy(Qt.StrongFocus)
     
     def _setup_global_hotkey(self):
-        """设置全局键盘快捷键 - pynput 方案"""
-        if not HAS_PYNPUT or keyboard is None:
-            print("[OverlayWindow] pynput 未安装，使用局部 F12 快捷键", flush=True)
+        """设置全局键盘快捷键 - keyboard 库方案（Windows）
+        
+        快捷键列表：
+        - Ctrl + F5: 显示/隐藏字幕窗口
+        - Ctrl + F6: 切换自动/手动模式
+        - Ctrl + F7: 上一条字幕记录
+        - Ctrl + F8: 开始/结束监听
+        - Ctrl + F9: 下一条字幕记录
+        """
+        if not HAS_KEYBOARD or keyboard is None:
+            print("[OverlayWindow] keyboard 库未安装，使用局部快捷键", flush=True)
             return
         
         try:
-            def on_press(key):
-                try:
-                    if key == keyboard.Key.f12:
-                        self._toggle_visibility()
-                except AttributeError:
-                    pass
-                    
-            self._hotkey_listener = keyboard.Listener(on_press=on_press)
-            self._hotkey_listener.start()
-            print("[OverlayWindow] F12 全局热键已注册 (pynput)", flush=True)
+            # 注册全局热键 - 使用独立方法避免 lambda 闭包问题
+            keyboard.add_hotkey('ctrl+f5', self._on_hotkey_f5)
+            keyboard.add_hotkey('ctrl+f6', self._on_hotkey_f6)
+            keyboard.add_hotkey('ctrl+f7', self._on_hotkey_f7)
+            keyboard.add_hotkey('ctrl+f8', self._on_hotkey_f8)
+            keyboard.add_hotkey('ctrl+f9', self._on_hotkey_f9)
+            
+            print("[OverlayWindow] 全局热键已注册：Ctrl+F5~F9 (keyboard)", flush=True)
         except Exception as e:
             print(f"[OverlayWindow] 全局热键注册失败：{e}", flush=True)
+    
+    def _on_hotkey_f5(self):
+        """Ctrl+F5: 显示/隐藏字幕窗口"""
+        QTimer.singleShot(0, self._toggle_visibility)
+    
+    def _on_hotkey_f6(self):
+        """Ctrl+F6: 切换自动/手动模式"""
+        print(f"[OverlayWindow] Ctrl+F6 被按下，切换自动/手动模式，当前 _manual_transcription_mode={self._manual_transcription_mode}", flush=True)
+        
+        # 切换模式
+        self._manual_transcription_mode = not self._manual_transcription_mode
+        self.config.set("ui.transcription.manual_mode", self._manual_transcription_mode)
+        
+        # 从手动切到自动时，先停止手动监听
+        if not self._manual_transcription_mode and self._listening:
+            self.listeningStopped.emit()
+            self._listening = False
+            self.listen_btn.setText("▶ 开始监听")
+            self.listen_btn.setStyleSheet(self._listen_button_stylesheet())
+        
+        # 更新 UI
+        self._apply_transcription_mode_ui()
+        
+        # 发射信号通知主窗口
+        print(f"[OverlayWindow] Ctrl+F6 切换到 manual_mode={self._manual_transcription_mode}，发射 transcriptionModeChanged 信号", flush=True)
+        QTimer.singleShot(0, lambda: self.transcriptionModeChanged.emit(self._manual_transcription_mode))
+    
+    def _on_hotkey_f7(self):
+        """Ctrl+F7: 上一条字幕"""
+        print(f"[OverlayWindow] Ctrl+F7 被按下，上一条字幕，current_page={self.caption_history.current_page}, pages={len(self.caption_history.pages)}", flush=True)
+        if self.caption_history.pages:
+            print("[OverlayWindow] 直接调用 caption_history._show_previous()", flush=True)
+            self.caption_history._show_previous()
+        else:
+            print("[OverlayWindow] 没有字幕内容，无法翻页", flush=True)
+    
+    def _on_hotkey_f8(self):
+        """Ctrl+F8: 切换监听"""
+        print("[OverlayWindow] Ctrl+F8 被按下，切换监听", flush=True)
+        QTimer.singleShot(0, self._emit_listening_toggled)
+    
+    def _on_hotkey_f9(self):
+        """Ctrl+F9: 下一条字幕"""
+        print(f"[OverlayWindow] Ctrl+F9 被按下，下一条字幕，current_page={self.caption_history.current_page}, pages={len(self.caption_history.pages)}", flush=True)
+        if self.caption_history.pages:
+            print("[OverlayWindow] 直接调用 caption_history._show_next()", flush=True)
+            self.caption_history._show_next()
+        else:
+            print("[OverlayWindow] 没有字幕内容，无法翻页", flush=True)
+    
+    def _emit_listening_toggled(self):
+        """发射 listeningToggled 信号（在主线程执行）"""
+        print("[OverlayWindow] _emit_listening_toggled 被调用", flush=True)
+        self.listeningToggled.emit()
     
     def _toggle_visibility(self):
         """切换窗口可见性（全局热键回调）"""
@@ -590,6 +661,24 @@ class OverlayWindow(QWidget):
             self.hide()
         else:
             self.show()
+    
+    def _toggle_transcription_mode(self):
+        """切换自动/手动转录模式（全局热键回调）"""
+        # 通过信号通知主窗口切换模式
+        self.transcriptionModeChanged.emit(not self._manual_transcription_mode)
+    
+    def _prev_caption(self):
+        """上一条字幕记录（全局热键回调）"""
+        self.caption_history._show_previous()
+    
+    def _next_caption(self):
+        """下一条字幕记录（全局热键回调）"""
+        self.caption_history._show_next()
+    
+    def _toggle_listening(self):
+        """开始/结束监听（全局热键回调）"""
+        # 通过信号通知主窗口切换监听状态
+        self.listeningToggled.emit()
 
     def _on_drag_bar_double_click(self):
         """拖动条双击"""
@@ -860,26 +949,28 @@ class OverlayWindow(QWidget):
     def enterEvent(self, event):
         """鼠标移入 - 显示背景色"""
         if hasattr(self, 'content_widget'):
-            self.content_widget.setStyleSheet("""
-                QWidget#contentWidget {
+            border_radius = self.config.overlay_border_radius
+            self.content_widget.setStyleSheet(f"""
+                QWidget#contentWidget {{
                     background-color: rgba(30, 30, 30, 200);
                     border: 1px solid rgba(255, 255, 255, 64);
-                    border-bottom-left-radius: 12px;
-                    border-bottom-right-radius: 12px;
-                }
+                    border-bottom-left-radius: {border_radius}px;
+                    border-bottom-right-radius: {border_radius}px;
+                }}
             """)
         super().enterEvent(event)
 
     def leaveEvent(self, event):
         """鼠标移出 - 恢复透明"""
         if hasattr(self, 'content_widget'):
-            self.content_widget.setStyleSheet("""
-                QWidget#contentWidget {
+            border_radius = self.config.overlay_border_radius
+            self.content_widget.setStyleSheet(f"""
+                QWidget#contentWidget {{
                     background-color: transparent;
                     border: 1px solid transparent;
-                    border-bottom-left-radius: 12px;
-                    border-bottom-right-radius: 12px;
-                }
+                    border-bottom-left-radius: {border_radius}px;
+                    border-bottom-right-radius: {border_radius}px;
+                }}
             """)
         super().leaveEvent(event)
 
@@ -897,7 +988,8 @@ class OverlayWindow(QWidget):
 
     def closeEvent(self, event):
         self._hover_timer.stop()
-        # 清理 pynput listener
-        if hasattr(self, '_hotkey_listener') and self._hotkey_listener:
-            self._hotkey_listener.stop()
+        # 清理 keyboard 库的全局热键
+        if HAS_KEYBOARD and keyboard is not None:
+            keyboard.unhook_all()
+            print("[OverlayWindow] 全局热键已清理", flush=True)
         super().closeEvent(event)

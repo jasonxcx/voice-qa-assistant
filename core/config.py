@@ -207,6 +207,60 @@ class Config:
         """获取图标路径"""
         return self.get("ui.icon", "")
 
+    @property
+    def overlay_border_radius(self) -> int:
+        """获取字幕窗口边框圆角大小"""
+        return self.get("ui.overlay_border_radius", 12)
+
+    def _read_prompt_file(self, relative_path: str, default: str = "") -> str:
+        """从文件读取提示词内容，如果文件不存在或读取失败则返回默认值"""
+        if not relative_path:
+            return default
+        project_root = Path(__file__).parent.parent
+        file_path = project_root / relative_path
+        try:
+            if file_path.exists():
+                return file_path.read_text(encoding='utf-8').strip()
+        except Exception:
+            pass
+        return default
+
+    @property
+    def stt_initial_prompt(self) -> str:
+        """获取 STT 转录提示词"""
+        return self.get("stt.initial_prompt", "面试场景，包含技术术语如 Java, Python, MySQL, Redis, Kafka, Docker, Kubernetes, 微服务，分布式系统，算法，数据结构等。")
+
+    @property
+    def stt_hotwords(self) -> str:
+        """获取 STT 热词"""
+        return self.get("stt.hotwords", "Java Python MySQL Redis Kafka Docker Kubernetes Spring TensorFlow PyTorch 微服务 分布式 算法 数据结构 多线程 并发 API SDK HTTP TCP IP")
+
+    @property
+    def llm_system_prompt_base(self) -> str:
+        """获取 LLM 基础系统提示词（从文件读取）"""
+        prompt_file = self.get("llm.prompts.base", "")
+        return self._read_prompt_file(prompt_file, "你是一个熟悉计算机专业知识的Java工程师助手。")
+
+    @property
+    def llm_temperature(self) -> float:
+        """获取 LLM 温度参数"""
+        return self.get("llm.generation.temperature", 0.3)
+
+    @property
+    def llm_max_completion_tokens(self) -> int:
+        """获取 LLM 最大生成 token 数"""
+        return self.get("llm.generation.max_completion_tokens", 500)
+
+    @property
+    def llm_max_completion_tokens_stream(self) -> int:
+        """获取 LLM 流式最大生成 token 数"""
+        return self.get("llm.generation.max_completion_tokens_stream", 1000)
+
+    @property
+    def llm_reasoning_effort(self) -> str:
+        """获取 LLM 思考强度"""
+        return self.get("llm.generation.reasoning_effort", "none")
+
 
 # 全局配置实例
 _config: Optional[Config] = None

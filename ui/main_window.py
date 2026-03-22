@@ -468,6 +468,7 @@ class MainWindow(QMainWindow):
         self.overlay.listeningStarted.connect(self._on_overlay_listening_started)
         self.overlay.listeningStopped.connect(self._on_overlay_listening_stopped)
         self.overlay.transcriptionModeChanged.connect(self._on_overlay_transcription_mode_changed)
+        self.overlay.listeningToggled.connect(self._on_overlay_listening_toggled)  # 全局快捷键切换监听
 
         # 连接 LLM 信号到槽函数
         self.token_signal.connect(self._on_token_update)
@@ -568,7 +569,7 @@ class MainWindow(QMainWindow):
         """切换字幕窗口显示/隐藏"""
         if self.overlay.isVisible():
             self.overlay.hide()
-            self.caption_status.setText("字幕窗口：已隐藏（点击字幕按钮或 F12 重新显示）")
+            self.caption_status.setText("字幕窗口：已隐藏（点击字幕按钮或 Ctrl+F5 重新显示）")
             self.caption_toggle_btn.setText("📑 字幕")
         else:
             self.overlay.show()
@@ -950,7 +951,7 @@ class MainWindow(QMainWindow):
         self.start_btn.setEnabled(False)
         self.status_label.setText("● 模型加载中...")
         self.status_label.setStyleSheet("color: #9E9E9E;")
-        self._show_download_dialog()
+        # 注意：不要在这里调用 _show_download_dialog()，只有在真正需要下载时才显示下载对话框
 
     def _show_download_dialog(self):
         if self._stt_download_canceled:
@@ -1093,6 +1094,7 @@ class MainWindow(QMainWindow):
 
     def _on_overlay_transcription_mode_changed(self, manual_mode: bool):
         """字幕窗口切换手动/自动转录模式"""
+        print(f"[MainWindow] _on_overlay_transcription_mode_changed 被调用，manual_mode={manual_mode}", flush=True)
         self.audio_capture.set_manual_mode(manual_mode)
         self.overlay.set_listen_button_enabled(self.audio_capture.is_running() and manual_mode)
 
@@ -1101,12 +1103,54 @@ class MainWindow(QMainWindow):
                 self.audio_capture.stop_recording()
             self.status_label.setText("● 手动转录模式")
             self.status_label.setStyleSheet(f"color: {STATUS_COLORS['idle']};")
-            return
+        else:
+            # 自动模式：无论是否运行都更新状态栏
+            if self.audio_capture.is_running() and self.audio_capture.stt_model is not None:
+                self.status_label.setText("● 自动转录中...")
+                self.status_label.setStyleSheet(f"color: {STATUS_COLORS['listening']};")
+            else:
+                self.status_label.setText("● 自动模式（未启动）")
+                self.status_label.setStyleSheet(f"color: {STATUS_COLORS['idle']};")
 
-        # 自动模式：如果模型已加载，立即生效并持续分句
-        if self.audio_capture.is_running() and self.audio_capture.stt_model is not None:
-            self.status_label.setText("● 自动转录中...")
-            self.status_label.setStyleSheet(f"color: {STATUS_COLORS['listening']};")
+    def _on_overlay_listening_toggled(self):
+        """全局快捷键 Ctrl+F8 切换监听状态"""
+        print("[MainWindow] _on_overlay_listening_toggled 被调用", flush=True)
+        
+        # 检查音频捕获是否运行
+        if not self.audio_capture.is_running():
+            # 首次启动：启动音频捕获并开始录音
+            print("[MainWindow] 音频捕获未运行，启动并开始录音", flush=True)
+            self._update_config_from_ui()
+            is_valid, error_msg = self.config.validate()
+            if not is_valid:
+                QMessageBox.warning(self, "配置错误", error_msg)
+                return
+            self.audio_capture.start()
+            # 同步 overlay 状态
+            self.overlay._listening = True
+            self.overlay.listen_btn.setText("■ 停止监听")
+            self.overlay.listen_btn.setStyleSheet(self.overlay._listen_button_stylesheet())
+            return
+        
+        # 音频捕获已运行，切换录音状态
+        if self.audio_capture._recording:
+            # 停止录音
+            print("[MainWindow] 正在录音，停止", flush=True)
+            self.audio_capture.stop_recording()
+            # 同步 overlay 状态
+            self.overlay._listening = False
+            self.overlay.listen_btn.setText("▶ 开始监听")
+            self.overlay.listen_btn.setStyleSheet(self.overlay._listen_button_stylesheet())
+            # 注意：不隐藏字幕窗口，让用户继续查看
+        else:
+            # 开始录音（手动模式）
+            print("[MainWindow] 未录音，开始录音", flush=True)
+            self.audio_capture.set_manual_mode(True)
+            self.audio_capture._recording = True
+            # 同步 overlay 状态
+            self.overlay._listening = True
+            self.overlay.listen_btn.setText("■ 停止监听")
+            self.overlay.listen_btn.setStyleSheet(self.overlay._listen_button_stylesheet())
 
     def _update_volume_display(self):
         """更新音量显示"""
@@ -1243,6 +1287,8 @@ class MainWindow(QMainWindow):
         self._update_config_from_ui()
         try:
             self.config.save()
+            # 重新创建 LLM 客户端以应用新配置
+            self.llm_client.switch_mode()
             QMessageBox.information(self, "保存成功", "配置已保存到 config.yaml")
             log_system("配置已保存", logging.INFO)
         except Exception as e:

@@ -15,41 +15,47 @@ class BaseLLMClient:
         self.model = model
         self.base_url = base_url
 
-    async def generate(self, prompt: str, system_prompt: str = "") -> str:
+    async def generate(self, prompt: str, system_prompt: str = "",
+                      temperature: float = 0.3,
+                      max_completion_tokens: int = 500,
+                      reasoning_effort: str = "none") -> str:
         print(f"[LLM] 使用 OpenAI 库同步生成回答", flush=True)
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
-        
+
         client = OpenAI(api_key=self.api_key, base_url=self.base_url)
         response = client.chat.completions.create(
             model=self.model,
             messages=messages,
             stream=False,
-            temperature=0.3,
-            max_completion_tokens=500,
-            reasoning_effort='none'
+            temperature=temperature,
+            max_completion_tokens=max_completion_tokens,
+            reasoning_effort=reasoning_effort
         )
         return response.choices[0].message.content
 
 
     async def generate_stream(self, prompt: str, system_prompt: str = "",
-                              callback: Optional[Callable[[str], None]] = None) -> str:
+                              callback: Optional[Callable[[str], None]] = None,
+                              temperature: float = 0.3,
+                              max_completion_tokens: int = 1000,
+                              reasoning_effort: str = "none") -> str:
         print(f"[LLM] 使用 OpenAI 库流式生成回答")
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
-        
+
         client = OpenAI(api_key=self.api_key, base_url=self.base_url)
         stream = client.chat.completions.create(
             model=self.model,
             messages=messages,
             stream=True,
-            temperature=0.3,
-            max_completion_tokens=1000,
-            reasoning_effort='none'
+            temperature=temperature,
+            max_completion_tokens=max_completion_tokens,
+            reasoning_effort=reasoning_effort
         )
         full_content = ""
         for chunk in stream:
@@ -92,25 +98,27 @@ class LLMClient:
             base_url=base_url
         )
 
-    def build_system_prompt(self, resume_text: str = "") -> str:
+    def build_system_prompt(self, document_text: str = "") -> str:
         """
         构建系统提示词
 
         Args:
-            resume_text: 简历文本
+            document_text: 导入的文档文本
 
         Returns:
             系统提示词
         """
-        base_prompt = "你是一个熟悉计算机专业知识的Java工程师助手。"
-        if resume_text:
-            base_prompt += f"""{base_prompt}
+        base_prompt = self.config.llm_system_prompt_base
 
-## 面试者简历信息
-{resume_text}
-请基于以上简历信息，结合面试者的实际经历，为面试者生成回答。"""
+        if document_text:
+            # 有文档时，追加文档信息
+            base_prompt += f"""
 
-        base_prompt +="""
+## 面试者文档信息
+{document_text}
+请基于以上文档信息，结合面试者的实际经历，为面试者生成回答。"""
+
+        base_prompt += """
 ## 回答规则
 1. **简短精炼**: 每个回答控制在 100-200 字，只列出关键点
 2. **结构化**: 列举要点，每点一句话
@@ -135,12 +143,12 @@ class LLMClient:
         """
         from core.resume_parser import ResumeParser
 
-        resume_text = ""
+        document_text = ""
         if resume_data:
             parser = ResumeParser()
-            resume_text = parser.format_for_prompt(resume_data)
+            document_text = parser.format_for_prompt(resume_data)
 
-        system_prompt = self.build_system_prompt(resume_text)
+        system_prompt = self.build_system_prompt(document_text)
 
         # 简短回答的 Prompt 强化
         prompt = f"""请回答以下面试问题（100-200 字，只列关键点）：
@@ -149,7 +157,12 @@ class LLMClient:
 
 回答："""
 
-        return await self.client.generate(prompt, system_prompt)
+        return await self.client.generate(
+            prompt, system_prompt,
+            temperature=self.config.llm_temperature,
+            max_completion_tokens=self.config.llm_max_completion_tokens,
+            reasoning_effort=self.config.llm_reasoning_effort
+        )
 
     async def generate_answer_stream(self, question: str,
                                      resume_data: Optional[dict] = None,
@@ -167,12 +180,12 @@ class LLMClient:
         """
         from core.resume_parser import ResumeParser
 
-        resume_text = ""
+        document_text = ""
         if resume_data:
             parser = ResumeParser()
-            resume_text = parser.format_for_prompt(resume_data)
+            document_text = parser.format_for_prompt(resume_data)
 
-        system_prompt = self.build_system_prompt(resume_text)
+        system_prompt = self.build_system_prompt(document_text)
 
         prompt = f"""请回答以下面试问题（100-200 字，只列关键点）：
 
@@ -180,7 +193,12 @@ class LLMClient:
 
 回答："""
 
-        return await self.client.generate_stream(prompt, system_prompt, callback)
+        return await self.client.generate_stream(
+            prompt, system_prompt, callback,
+            temperature=self.config.llm_temperature,
+            max_completion_tokens=self.config.llm_max_completion_tokens_stream,
+            reasoning_effort=self.config.llm_reasoning_effort
+        )
 
 if __name__ == '__main__':
     from core.config import get_config

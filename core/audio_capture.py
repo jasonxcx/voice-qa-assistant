@@ -206,35 +206,94 @@ class AudioCapture(QObject):
                 }
                 repo_id = repo_map.get((model_name or "").strip().lower())
                 if repo_id:
-                    self._cancel_download = False
-                    self.model_download_started.emit(repo_id)
-                    start_ts = time.time()
+                    # 确保 cache_dir 是 None 而不是空字符串
+                    actual_cache_dir = cache_dir if cache_dir else None
 
-                    class SignalTqdm(_tqdm):
-                        def update(inner_self, *args, **kwargs):
-                            if self._cancel_download:
-                                raise RuntimeError("用户取消下载")
-                            super().update(*args, **kwargs)
-                            done = int(inner_self.n or 0)
-                            total_val = int(inner_self.total or 0)
-                            progress = (done * 100.0 / total_val) if total_val > 0 else 0.0
-                            elapsed = max(1e-6, time.time() - start_ts)
-                            speed = done / elapsed
-                            self.model_download_progress.emit(min(100.0, progress), f"{done}/{max(total_val,1)} files, {speed:.2f} files/s")
+                    # 检查缓存是否存在
+                    from huggingface_hub.constants import HF_HUB_CACHE
+                    base_cache = Path(actual_cache_dir) if actual_cache_dir else Path(HF_HUB_CACHE)
+                    # HuggingFace 缓存格式：models--Systran--faster-whisper-large-v3
+                    repo_cache_dir = base_cache / f"models--{repo_id.replace('/', '--')}"
+                    snapshots_dir = repo_cache_dir / "snapshots"
 
-                    download_kwargs = {
-                        "repo_id": repo_id,
-                        "local_dir": cache_dir,
-                        "resume_download": True,
-                        "tqdm_class": SignalTqdm,
-                    }
+                    # 检查 snapshots 目录下是否有有效的模型（任何子目录中有 model.bin）
+                    model_cached = False
+                    model_source = None
+                    if snapshots_dir.exists():
+                        for snapshot_subdir in snapshots_dir.iterdir():
+                            if snapshot_subdir.is_dir():
+                                model_bin = snapshot_subdir / "model.bin"
+                                if model_bin.exists():
+                                    model_cached = True
+                                    model_source = str(snapshot_subdir)
+                                    log_system(f"找到缓存模型：{model_bin}", logging.INFO)
+                                    break
 
-                    model_source = snapshot_download(**download_kwargs)
-                    model_bin = Path(model_source) / "model.bin"
-                    if not model_bin.exists():
-                        raise RuntimeError(f"模型下载不完整：{model_source} 缺少 model.bin")
-                    self.model_download_progress.emit(100.0, "完成")
-                    self.model_download_finished.emit()
+                    log_system(f"模型已缓存: {model_cached}", logging.INFO)
+
+                    if model_cached and model_source:
+                        # 模型已缓存，直接使用
+                        log_system(f"模型已缓存，直接使用：{model_source}", logging.INFO)
+                    else:
+                        # 模型未缓存，需要下载
+                        log_system(f"模型未缓存，开始下载：{repo_id}", logging.INFO)
+                        self._cancel_download = False
+                        self.model_download_started.emit(repo_id)
+                        start_ts = time.time()
+                        download_started = False
+
+                        class SignalTqdm(_tqdm):
+                            def __init__(inner_self, *args, **kwargs):
+                                super().__init__(*args, **kwargs)
+                                inner_self._started = False
+
+                            def update(inner_self, *args, **kwargs):
+                                nonlocal download_started
+                                if not download_started:
+                                    download_started = True
+                                if self._cancel_download:
+                                    raise RuntimeError("用户取消下载")
+                                super().update(*args, **kwargs)
+                                done = int(inner_self.n or 0)
+                                total_val = int(inner_self.total or 0)
+                                progress = (done * 100.0 / total_val) if total_val > 0 else 0.0
+                                elapsed = max(1e-6, time.time() - start_ts)
+                                speed = done / elapsed
+                                self.model_download_progress.emit(min(100.0, progress), f"{done}/{max(total_val,1)} files, {speed:.2f} files/s")
+
+                        download_kwargs = {
+                            "repo_id": repo_id,
+                            "local_dir": actual_cache_dir,
+                            "tqdm_class": SignalTqdm,
+                        }
+
+                        # 如果配置了镜像，通过环境变量设置
+                        old_endpoint = os.environ.get("HF_ENDPOINT", "")
+                        if download_mirror:
+                            os.environ["HF_ENDPOINT"] = download_mirror
+                            log_system(f"使用镜像下载：{download_mirror}", logging.INFO)
+
+                        try:
+                            model_source = snapshot_download(**download_kwargs)
+                            download_model_bin = Path(model_source) / "model.bin"
+                            if not download_model_bin.exists():
+                                # 缓存不完整，删除整个repo缓存目录并重试
+                                log_system(f"缓存不完整，删除并重新下载：{repo_cache_dir}", logging.INFO)
+                                shutil.rmtree(repo_cache_dir, ignore_errors=True)
+                                model_source = snapshot_download(**download_kwargs)
+                                download_model_bin = Path(model_source) / "model.bin"
+                                if not download_model_bin.exists():
+                                    raise RuntimeError(f"模型下载不完整：{model_source} 缺少 model.bin")
+                        finally:
+                            # 恢复原来的 endpoint
+                            if download_mirror:
+                                if old_endpoint:
+                                    os.environ["HF_ENDPOINT"] = old_endpoint
+                                else:
+                                    os.environ.pop("HF_ENDPOINT", None)
+
+                        self.model_download_progress.emit(100.0, "完成")
+                        self.model_download_finished.emit()
 
             self.stt_model = WhisperModel(
                 model_size_or_path=model_source,
@@ -272,8 +331,10 @@ class AudioCapture(QObject):
     
     def restart_monitoring(self):
         """重启音量监控（用于切换设备后）"""
+        print(f"[AudioCapture] restart_monitoring 被调用，当前 monitoring={self._monitoring}", flush=True)
         self.stop_monitoring()
         time.sleep(0.1)  # 短暂等待确保旧线程已停止
+        print(f"[AudioCapture] 重启音量监控，当前配置设备索引={self.config.audio_device_index}", flush=True)
         self.start_monitoring()
         print("[AudioCapture] 音量监控已重启", flush=True)
 
@@ -525,12 +586,12 @@ class AudioCapture(QObject):
                 self._save_debug_audio(audio_buffer, sample_rate, 0, "_debug", channels)
 
             # 转录配置 - 优化参数以提高准确率
-            # 添加面试场景提示词和 IT 技术热词
+            # 添加面试场景提示词和 IT 技术热词（从配置读取）
             segments, info = self.stt_model.transcribe(
                 audio_float,
                 language='zh',
-                initial_prompt="面试场景，包含技术术语如 Java, Python, MySQL, Redis, Kafka, Docker, Kubernetes, 微服务，分布式系统，算法，数据结构等。",  # 预设提示词
-                hotwords="Java Python MySQL Redis Kafka Docker Kubernetes Spring TensorFlow PyTorch 微服务 分布式 算法 数据结构 多线程 并发 API SDK HTTP TCP IP",  # 技术热词
+                initial_prompt=self.config.stt_initial_prompt,  # 预设提示词
+                hotwords=self.config.stt_hotwords,  # 技术热词
                 beam_size=10,      # 增加 beam size 提高准确率
                 best_of=10,        # 增加 best_of
                 temperature=0.0,   # 固定温度，避免随机性
@@ -602,7 +663,7 @@ class AudioCapture(QObject):
         """获取 WASAPI loopback 设备索引"""
         try:
             # 1. 首先尝试使用配置的设备索引
-            configured = self.config.get('audio', {}).get('input_device_index', None)
+            configured = self.config.audio_device_index
             if configured is not None:
                 try:
                     info = pyaudio_instance.get_device_info_by_index(configured)

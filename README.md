@@ -81,6 +81,32 @@ python app.py
 3. **开始**: 点击"加载模型"按钮，屏幕底部会显示字幕窗口，可以手动点击按钮开始监听音频
 4. **查看字幕**: 点击结束监听按钮后程序会转录问题和 AI 回答关键点
 
+### 快捷键
+
+| 名称        | 按键            | 功能                                 |
+|:----------|:--------------|------------------------------------|
+| 显示/隐藏字幕窗口 | **Ctrl + F5** | `toggle_overlay`                   |
+| 切换自动/手动模式 | **Ctrl + F6** | `switch_auto`                      |
+| 开始/结束监听   | **Ctrl + F8** | `start_listening`/`stop_listening` |
+| 上一条字幕记录   | **Ctrl + F7** | `prev_caption`                     |
+| 下一条字幕记录   | **Ctrl + F9** | `next_caption`                     |
+
+
+### ✅ 可以实现
+如果需要支持配置化和组合键，可以：
+
+1. **添加配置项**到 `config.yaml`:
+```yaml
+ui:
+  hotkeys:
+    : "F12"
+    : "Ctrl+Left"
+    : "Ctrl+Right"
+    : "F6"      # 新增
+    : "F7"       # 新增
+```
+
+
 ## 故障排除
 
 **字幕窗口不显示:**
@@ -109,7 +135,3 @@ python app.py
 - 违反当地法律法规的行为
 
 使用者应对自身行为负全部法律责任，作者不承担任何因滥用本项目导致的直接或间接后果。使用即表示您已阅读并同意本声明。
-
-## 许可证
-本项目采用 [Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0)](https://creativecommons.org/licenses/by-nc/4.0/) 许可证进行开源。  
-这意味着您可以自由地共享和修改本项目的内容，但**仅限于非商业用途**。  
