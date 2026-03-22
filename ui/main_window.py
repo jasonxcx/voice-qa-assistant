@@ -70,6 +70,61 @@ class MainWindow(QMainWindow):
         self._initialized = True
         print("[Debug] MainWindow 初始化完成", flush=True)
     
+    def _load_audio_devices(self):
+        """加载音频输入设备列表"""
+        try:
+            devices = sd.query_devices()
+            self.audio_devices = []
+            
+            for i, dev in enumerate(devices):
+                # 只添加输入设备（max_input_channels > 0）
+                if dev['max_input_channels'] > 0:
+                    self.audio_devices.append({
+                        'index': i,
+                        'name': dev['name'],
+                        'channels': dev['max_input_channels']
+                    })
+            
+            # 清空下拉框
+            self.audio_device_combo.clear()
+            
+            # 添加设备到下拉框
+            for dev in self.audio_devices:
+                self.audio_device_combo.addItem(f"{dev['name']} ({dev['channels']} 通道)")
+            
+            # 从配置恢复选择的设备
+            configured_index = self.config.audio_device_index
+            for i, dev in enumerate(self.audio_devices):
+                if dev['index'] == configured_index:
+                    self.audio_device_combo.setCurrentIndex(i)
+                    break
+            
+            # 连接设备切换信号
+            self.audio_device_combo.currentIndexChanged.connect(self._on_audio_device_changed)
+            
+            print(f"[Debug] 加载了 {len(self.audio_devices)} 个音频输入设备", flush=True)
+            
+        except Exception as e:
+            print(f"[Error] 加载音频设备失败：{e}", flush=True)
+            self.audio_devices = [{'index': 0, 'name': '默认设备', 'channels': 2}]
+            self.audio_device_combo.addItem("默认设备")
+    
+    def _on_audio_device_changed(self, index):
+        """音频输入设备切换"""
+        if index < 0 or index >= len(self.audio_devices):
+            return
+        
+        device = self.audio_devices[index]
+        device_index = device['index']
+        
+        # 更新配置
+        self.config.set("audio.input_device_index", device_index)
+        
+        # 重启音量监控以使用新设备
+        self.audio_capture.restart_monitoring()
+        
+        print(f"[Debug] 切换到音频设备：{device['name']} (索引：{device_index})", flush=True)
+    
     def _init_ui(self):
         """初始化 UI"""
 
@@ -368,6 +423,11 @@ class MainWindow(QMainWindow):
         self.refresh_models_btn.setVisible(is_lmstudio)
         self.model_combo.setEnabled(is_lmstudio)
         self.refresh_models_btn.setEnabled(is_lmstudio)
+        
+        # 初始化时自动刷新 LM Studio 模型列表
+        if is_lmstudio:
+            print("[Debug] _sync_ui_with_config: 自动刷新 LM Studio 模型列表", flush=True)
+            self._refresh_lmstudio_models()
 
         model_map = {"tiny": 0, "base": 1, "small": 2, "medium": 3, "large-v2": 4, "large-v3": 5}
         self.stt_model_combo.setCurrentIndex(model_map.get(self.config.stt_model, 3))
@@ -805,7 +865,8 @@ class MainWindow(QMainWindow):
             self.stt_device_combo.setEnabled(False)
             self.compute_type_combo.setEnabled(False)
             self.audio_device_combo.setEnabled(False)
-            self.llm_combo.setEnabled(False)
+            # LLM 配置在录音时仍可修改
+            # self.llm_combo.setEnabled(False)
         else:
             self.start_btn.setText("▶ 加载模型")
             self.start_btn.setStyleSheet("""

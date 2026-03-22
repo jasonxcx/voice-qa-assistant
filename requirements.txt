@@ -1,6 +1,7 @@
 # PyQt5 UI
 PyQt5>=5.15.0
 PyQt5-sip>=12.13.0
+pynput>=1.7.6     # 全局键盘快捷键支持（跨平台）
 
 # 音频捕获
 pyaudiowpatch>=0.2.0  # WASAPI loopback 支持

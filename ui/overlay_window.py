@@ -4,7 +4,7 @@
 - 背景完全透明
 - 顶部拖动条（可拖动窗口，双击隐藏）
 - 控制按钮：隐藏、字体变大、字体变小、监听控制
-- F12 快捷键显示/隐藏
+- F12 全局快捷键显示/隐藏
 - 鼠标拖动边缘调节窗口大小
 - 显示"等待音频输入..."占位符
 """
@@ -15,6 +15,13 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QPoint, QTimer, pyqtSignal, QEvent, QPropertyAnimation, QEasingCurve, QRect
 from PyQt5.QtGui import QFont, QColor, QCursor
 from collections import deque
+
+try:
+    from pynput import keyboard
+    HAS_PYNPUT = True
+except ImportError:
+    keyboard = None
+    HAS_PYNPUT = False
 
 
 class CaptionHistory(QWidget):
@@ -338,8 +345,10 @@ class OverlayWindow(QWidget):
         self._resize_start_geometry = (0, 0, 0, 0)  # (x, y, width, height)
         self._listening = False  # 监听状态
         self._manual_transcription_mode = bool(self.config.get("ui.transcription.manual_mode", True))
+        self._hotkey_listener = None
         self._init_ui()
         self._setup_window_flags()
+        self._setup_global_hotkey()
         self.setMouseTracking(True)
 
         # 定时器检测鼠标位置
@@ -554,6 +563,33 @@ class OverlayWindow(QWidget):
         )
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFocusPolicy(Qt.StrongFocus)
+    
+    def _setup_global_hotkey(self):
+        """设置全局键盘快捷键 - pynput 方案"""
+        if not HAS_PYNPUT or keyboard is None:
+            print("[OverlayWindow] pynput 未安装，使用局部 F12 快捷键", flush=True)
+            return
+        
+        try:
+            def on_press(key):
+                try:
+                    if key == keyboard.Key.f12:
+                        self._toggle_visibility()
+                except AttributeError:
+                    pass
+                    
+            self._hotkey_listener = keyboard.Listener(on_press=on_press)
+            self._hotkey_listener.start()
+            print("[OverlayWindow] F12 全局热键已注册 (pynput)", flush=True)
+        except Exception as e:
+            print(f"[OverlayWindow] 全局热键注册失败：{e}", flush=True)
+    
+    def _toggle_visibility(self):
+        """切换窗口可见性（全局热键回调）"""
+        if self.isVisible():
+            self.hide()
+        else:
+            self.show()
 
     def _on_drag_bar_double_click(self):
         """拖动条双击"""
@@ -848,14 +884,8 @@ class OverlayWindow(QWidget):
         super().leaveEvent(event)
 
     def keyPressEvent(self, event):
-        if event.key() == Qt.Key_F12:
-            if self.isVisible():
-                self.hide()
-            else:
-                self.show()
-            event.accept()
-            return
-        elif event.modifiers() == Qt.ControlModifier and event.key() == Qt.Key_Left:
+        """键盘按键事件 - 保留 Ctrl+Left/Right 用于字幕导航"""
+        if event.modifiers() == Qt.ControlModifier and event.key() == Qt.Key_Left:
             self.caption_history._show_previous()
             event.accept()
             return
@@ -867,4 +897,7 @@ class OverlayWindow(QWidget):
 
     def closeEvent(self, event):
         self._hover_timer.stop()
+        # 清理 pynput listener
+        if hasattr(self, '_hotkey_listener') and self._hotkey_listener:
+            self._hotkey_listener.stop()
         super().closeEvent(event)

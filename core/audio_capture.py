@@ -211,16 +211,16 @@ class AudioCapture(QObject):
                     start_ts = time.time()
 
                     class SignalTqdm(_tqdm):
-                        def update(inner_self, n=1):
+                        def update(inner_self, *args, **kwargs):
                             if self._cancel_download:
                                 raise RuntimeError("用户取消下载")
-                            super().update(n)
+                            super().update(*args, **kwargs)
                             done = int(inner_self.n or 0)
-                            total = int(inner_self.total or 0)
-                            progress = (done * 100.0 / total) if total > 0 else 0.0
+                            total_val = int(inner_self.total or 0)
+                            progress = (done * 100.0 / total_val) if total_val > 0 else 0.0
                             elapsed = max(1e-6, time.time() - start_ts)
                             speed = done / elapsed
-                            self.model_download_progress.emit(min(100.0, progress), f"{done}/{max(total,1)} files, {speed:.2f} files/s")
+                            self.model_download_progress.emit(min(100.0, progress), f"{done}/{max(total_val,1)} files, {speed:.2f} files/s")
 
                     download_kwargs = {
                         "repo_id": repo_id,
@@ -228,10 +228,6 @@ class AudioCapture(QObject):
                         "resume_download": True,
                         "tqdm_class": SignalTqdm,
                     }
-                    if download_mirror:
-                        endpoint = download_mirror.rstrip("/")
-                        download_kwargs["endpoint"] = endpoint
-                        log_system(f"STT 下载镜像生效：{endpoint}", logging.INFO)
 
                     model_source = snapshot_download(**download_kwargs)
                     model_bin = Path(model_source) / "model.bin"
@@ -266,15 +262,20 @@ class AudioCapture(QObject):
             pass
 
     def start_monitoring(self):
-        """启动音量监控（独立于录音）"""
+        """启动音量监控"""
         if self._monitoring:
             return
-
+        
         self._monitoring = True
-
-        # 启动音量监控线程
         self._volume_thread = threading.Thread(target=self._monitor_volume, daemon=True)
         self._volume_thread.start()
+    
+    def restart_monitoring(self):
+        """重启音量监控（用于切换设备后）"""
+        self.stop_monitoring()
+        time.sleep(0.1)  # 短暂等待确保旧线程已停止
+        self.start_monitoring()
+        print("[AudioCapture] 音量监控已重启", flush=True)
 
     def stop_monitoring(self):
         """停止音量监控"""
@@ -656,54 +657,79 @@ class AudioCapture(QObject):
 
     def _monitor_volume(self):
         """监控音频音量（使用 pyaudiowpatch）"""
+        p = None
+        stream = None
         try:
             p = pyaudio.PyAudio()
-            device_index = self._get_loopback_device(p)
-
-            # 获取设备信息
-            device_info = p.get_device_info_by_index(device_index)
-            channels = min(device_info['maxInputChannels'], 2)
-            sample_rate = int(device_info['defaultSampleRate'])
-
-            # 打开音频流
-            stream = p.open(
-                format=pyaudio.paInt16,
-                channels=channels,
-                rate=sample_rate,
-                input=True,
-                input_device_index=device_index,
-                frames_per_buffer=1024
-            )
-
-            log_system(f"音量监控启动：设备 {device_index}, 通道 {channels}", logging.DEBUG)
-
+            
             while self._monitoring:
                 try:
-                    # 读取音频数据
-                    data = stream.read(1024, exception_on_overflow=False)
+                    # 每次循环都重新获取设备索引（支持运行时切换）
+                    device_index = self._get_loopback_device(p)
 
-                    # 计算音量（RMS）
-                    audio_data = np.frombuffer(data, dtype=np.int16)
-                    audio_float = audio_data.astype(np.float32) / 32768.0
-                    volume = np.mean(np.abs(audio_float))
+                    # 获取设备信息
+                    device_info = p.get_device_info_by_index(device_index)
+                    channels = min(device_info['maxInputChannels'], 2)
+                    sample_rate = int(device_info['defaultSampleRate'])
 
-                    # 归一化到 0-1
-                    volume = min(1.0, volume * 10)
+                    # 打开音频流
+                    stream = p.open(
+                        format=pyaudio.paInt16,
+                        channels=channels,
+                        rate=sample_rate,
+                        input=True,
+                        input_device_index=device_index,
+                        frames_per_buffer=1024
+                    )
 
-                    # 发射音量信号
-                    self.volume_update.emit(volume)
+                    log_system(f"音量监控启动：设备 {device_index}, 通道 {channels}", logging.DEBUG)
+
+                    # 音量监控主循环
+                    while self._monitoring:
+                        try:
+                            # 读取音频数据
+                            data = stream.read(1024, exception_on_overflow=False)
+
+                            # 计算音量（RMS）
+                            audio_data = np.frombuffer(data, dtype=np.int16)
+                            audio_float = audio_data.astype(np.float32) / 32768.0
+                            volume = np.mean(np.abs(audio_float))
+
+                            # 归一化到 0-1
+                            volume = min(1.0, volume * 10)
+
+                            # 发射音量信号
+                            self.volume_update.emit(volume)
+
+                        except Exception as e:
+                            # 读取失败，继续尝试
+                            continue
 
                 except Exception as e:
-                    # 读取失败，继续尝试
-                    continue
-
-            stream.close()
-            p.terminate()
+                    log_system(f"音量监控设备错误：{e}", logging.WARNING)
+                    time.sleep(0.5)  # 等待后重试
+                finally:
+                    if stream is not None:
+                        try:
+                            stream.close()
+                        except Exception:
+                            pass
+                    stream = None
+                    
+                # 如果仍在监控中，重启以使用新设备
+                if self._monitoring:
+                    time.sleep(0.1)
 
         except Exception as e:
             error_msg = f"音量监控失败：{e}"
             log_system(error_msg, logging.WARNING)
             self.volume_update.emit(0.0)
+        finally:
+            if p is not None:
+                try:
+                    p.terminate()
+                except Exception:
+                    pass
 
     def stop(self):
         """停止音频捕获"""

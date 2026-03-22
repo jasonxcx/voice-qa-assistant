@@ -100,9 +100,14 @@ class Config:
 
         # 设置临时配置为 provider 中的值
         self.set("llm.mode", name)
-        self.set("llm.api_key", provider.get("api_key", ""))
-        self.set("llm.base_url", provider.get("base_url", ""))
-        self.set("llm.model", provider.get("model", ""))
+        
+        # 只在 provider 有对应配置时才覆盖，否则保留现有值
+        if "api_key" in provider:
+            self.set("llm.api_key", provider.get("api_key", ""))
+        if "base_url" in provider:
+            self.set("llm.base_url", provider.get("base_url", ""))
+        if "model" in provider:
+            self.set("llm.model", provider.get("model", ""))
 
     def get_provider_config(self, name: str) -> dict:
         """获取指定 provider 的配置"""
