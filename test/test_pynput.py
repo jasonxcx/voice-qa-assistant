@@ -32,7 +32,8 @@ def on_press(key):
             key_name = None
             if hasattr(key, 'vk') and key.vk:
                 print(f"→ vk={key.vk}")
-                if key.vk == 116: key_name = 'F5'
+                if key.vk == 115: key_name = 'F4'
+                elif key.vk == 116: key_name = 'F5'
                 elif key.vk == 117: key_name = 'F6'
                 elif key.vk == 118: key_name = 'F7'
                 elif key.vk == 119: key_name = 'F8'
@@ -55,7 +56,7 @@ def on_release(key):
 
 # 启动监听器
 print("\n=== pynput 键盘监听测试 ===")
-print("按 Ctrl+F5~F9 测试快捷键")
+print("按 Ctrl+F4~F9 测试快捷键")
 print("按 Esc 退出测试\n")
 
 listener = keyboard.Listener(on_press=on_press, on_release=on_release)

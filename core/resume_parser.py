@@ -1,5 +1,5 @@
 """
-Markdown 简历解析模块
+Markdown 解析模块
 """
 import mistune
 import re
@@ -7,20 +7,20 @@ from typing import Dict, List, Optional, Any
 
 
 class ResumeParser:
-    """Markdown 简历解析器"""
+    """Markdown 解析器"""
     
     def __init__(self):
         self.markdown = mistune.create_markdown(plugins=['table'])
     
     def parse(self, markdown_content: str) -> Dict[str, Any]:
         """
-        解析 Markdown 简历
+        解析 Markdown 文档
         
         Args:
-            markdown_content: Markdown 格式的简历内容
+            markdown_content: Markdown 格式的内容
             
         Returns:
-            结构化简历信息字典
+            结构化文档信息字典
         """
         lines = markdown_content.strip().split('\n')
         
@@ -194,10 +194,10 @@ class ResumeParser:
         格式化为 Prompt 注入文本
         
         Args:
-            resume_data: 解析后的简历数据
+            resume_data: 文档解析后的数据
             
         Returns:
-            格式化的简历文本
+            格式化的文档文本
         """
         parts = []
         
@@ -231,13 +231,13 @@ class ResumeParser:
 
 def parse_resume(markdown_path: str) -> Dict[str, Any]:
     """
-    便捷函数：从文件解析简历
+    便捷函数：从文件解析
     
     Args:
-        markdown_path: Markdown 简历文件路径
+        markdown_path: Markdown 文件路径
         
     Returns:
-        结构化简历信息
+        结构化文档信息
     """
     with open(markdown_path, 'r', encoding='utf-8') as f:
         content = f.read()

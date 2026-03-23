@@ -22,7 +22,7 @@ interview-helper/
 ├── core/
 │   ├── audio_capture.py  # 音频捕获
 │   ├── llm_client.py     # 大模型客户端
-│   ├── resume_parser.py  # 简历解析
+│   ├── resume_parser.py  # markdown文档解析
 │   ├── logger.py         # 日志管理
 │   └── config.py         # 配置管理
 ├── requirements.txt
@@ -76,36 +76,22 @@ python app.py
 
 ## 使用说明
 
-1. **导入简历**: 点击"选择简历"按钮，选择 Markdown 格式的简历文件
+1. **导入文档**: 点击"选择文档"按钮，选择 Markdown 格式的文件
 2. **模型配置**: 配置 LLM 模型和 STT 模型
 3. **开始**: 点击"加载模型"按钮，屏幕底部会显示字幕窗口，可以手动点击按钮开始监听音频
 4. **查看字幕**: 点击结束监听按钮后程序会转录问题和 AI 回答关键点
 
 ### 快捷键
 
-| 名称        | 按键            | 功能                                 |
-|:----------|:--------------|------------------------------------|
-| 显示/隐藏字幕窗口 | **Ctrl + F5** | `toggle_overlay`                   |
-| 切换自动/手动模式 | **Ctrl + F6** | `switch_auto`                      |
-| 开始/结束监听   | **Ctrl + F8** | `start_listening`/`stop_listening` |
-| 上一条字幕记录   | **Ctrl + F7** | `prev_caption`                     |
-| 下一条字幕记录   | **Ctrl + F9** | `next_caption`                     |
+可以在配置文件里面进行配置
 
-
-### ✅ 可以实现
-如果需要支持配置化和组合键，可以：
-
-1. **添加配置项**到 `config.yaml`:
-```yaml
-ui:
-  hotkeys:
-    : "F12"
-    : "Ctrl+Left"
-    : "Ctrl+Right"
-    : "F6"      # 新增
-    : "F7"       # 新增
-```
-
+| 名称        | 默认快捷键       | 功能配置项                |
+|:----------|:------------|----------------------|
+| 显示/隐藏字幕窗口 | **Ctrl+F4** | `overlay_visibility` |
+| 切换自动/手动模式 | **Ctrl+F6** | `transcription_mode` |
+| 开始/结束监听   | **Ctrl+F8** | `listening_toggled`  |
+| 上一条字幕记录   | **Ctrl+F7** | `prev_caption`       |
+| 下一条字幕记录   | **Ctrl+F9** | `next_caption`       |
 
 ## 故障排除
 

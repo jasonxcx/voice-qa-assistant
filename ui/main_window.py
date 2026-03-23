@@ -1,5 +1,5 @@
 """
-主窗口 - 简历导入、配置、控制
+主窗口 - 文档导入、配置、控制
 """
 
 import asyncio
@@ -152,15 +152,15 @@ class MainWindow(QMainWindow):
         self.status_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.status_label)
         
-        # 简历导入
-        resume_group = QGroupBox("简历导入（可选）")
+        # 文档导入
+        resume_group = QGroupBox("文档导入（可选）")
         resume_layout = QVBoxLayout(resume_group)
         
-        self.resume_path_label = QLabel("未选择简历文件（将使用通用回答模式）")
+        self.resume_path_label = QLabel("未选择文件（将使用通用回答模式）")
         self.resume_path_label.setStyleSheet("color: #9AA0A6; padding: 8px;")
         resume_layout.addWidget(self.resume_path_label)
         
-        select_btn = QPushButton(" 选择 Markdown 简历文件")
+        select_btn = QPushButton(" 选择 Markdown 文件")
         select_btn.clicked.connect(self._select_resume)
         resume_layout.addWidget(select_btn)
         
@@ -290,9 +290,8 @@ class MainWindow(QMainWindow):
         button_layout.addWidget(self.start_btn)
         
         # 字幕窗口显示/隐藏按钮
-        self.caption_toggle_btn = QPushButton("📑 字幕")
+        self.caption_toggle_btn = QPushButton("📑 字幕（Ctrl+F4）")
         self.caption_toggle_btn.setMinimumHeight(45)
-        self.caption_toggle_btn.setToolTip("显示/隐藏字幕窗口 (F12)")
         self.caption_toggle_btn.setStyleSheet("""
             QPushButton {
                 background-color: #2D2D2D;
@@ -484,9 +483,9 @@ class MainWindow(QMainWindow):
         self._on_overlay_transcription_mode_changed(self.overlay.is_manual_transcription_mode())
     
     def _select_resume(self):
-        """选择简历文件"""
+        """选择文件"""
         file_path, _ = QFileDialog.getOpenFileName(
-            self, "选择简历文件", "", "Markdown 文件 (*.md);;所有文件 (*.*)"
+            self, "选择文件", "", "Markdown 文件 (*.md);;所有文件 (*.*)"
         )
         
         if file_path:
@@ -501,7 +500,7 @@ class MainWindow(QMainWindow):
                 self.resume_path_label.setToolTip(summary)
                 
             except Exception as e:
-                QMessageBox.critical(self, "解析失败", f"简历解析失败：{str(e)}")
+                QMessageBox.critical(self, "解析失败", f"解析失败：{str(e)}")
     
     def _on_llm_changed(self, index: int):
         """切换 LLM 模式"""
@@ -547,7 +546,7 @@ class MainWindow(QMainWindow):
             self.status_label.setStyleSheet(f"color: {STATUS_COLORS['generating']};")
             self.audio_capture.stop()
             self.overlay.hide()
-            self.caption_status.setText("字幕窗口：已隐藏（点击字幕按钮或 F12 重新显示）")
+            self.caption_status.setText("字幕窗口：已隐藏（点击字幕按钮或 Ctrl+F4 重新显示）")
             self.caption_toggle_btn.setText("📑 字幕")
             self._update_ui_state()
             print("[主窗口] 监听已停止", flush=True)
@@ -569,7 +568,7 @@ class MainWindow(QMainWindow):
         """切换字幕窗口显示/隐藏"""
         if self.overlay.isVisible():
             self.overlay.hide()
-            self.caption_status.setText("字幕窗口：已隐藏（点击字幕按钮或 Ctrl+F5 重新显示）")
+            self.caption_status.setText("字幕窗口：已隐藏（点击字幕按钮或 Ctrl+F4 重新显示）")
             self.caption_toggle_btn.setText("📑 字幕")
         else:
             self.overlay.show()
@@ -1054,7 +1053,7 @@ class MainWindow(QMainWindow):
             self.caption_status.setText("字幕窗口：显示中（拖动顶部灰色条移动窗口，双击隐藏）")
             self.caption_toggle_btn.setText("📑 隐藏")
         else:
-            self.caption_status.setText("字幕窗口：已隐藏（点击字幕按钮或 F12 重新显示）")
+            self.caption_status.setText("字幕窗口：已隐藏（点击字幕按钮或 Ctrl+F4 重新显示）")
             self.caption_toggle_btn.setText("📑 字幕")
     
     def _on_overlay_listening_started(self):
@@ -1139,7 +1138,7 @@ class MainWindow(QMainWindow):
             self.audio_capture.stop_recording()
             # 同步 overlay 状态
             self.overlay._listening = False
-            self.overlay.listen_btn.setText("▶ 开始监听")
+            self.overlay.listen_btn.setText("▶ 开始监听 Ctrl+F8")
             self.overlay.listen_btn.setStyleSheet(self.overlay._listen_button_stylesheet())
             # 注意：不隐藏字幕窗口，让用户继续查看
         else:

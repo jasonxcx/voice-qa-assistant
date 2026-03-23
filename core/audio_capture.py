@@ -264,33 +264,24 @@ class AudioCapture(QObject):
                         download_kwargs = {
                             "repo_id": repo_id,
                             "local_dir": actual_cache_dir,
+                            "resume_download": True,
                             "tqdm_class": SignalTqdm,
                         }
-
-                        # 如果配置了镜像，通过环境变量设置
-                        old_endpoint = os.environ.get("HF_ENDPOINT", "")
                         if download_mirror:
-                            os.environ["HF_ENDPOINT"] = download_mirror
+                            endpoint = download_mirror.rstrip("/")
+                            download_kwargs["endpoint"] = endpoint
                             log_system(f"使用镜像下载：{download_mirror}", logging.INFO)
 
-                        try:
+                        model_source = snapshot_download(**download_kwargs)
+                        download_model_bin = Path(model_source) / "model.bin"
+                        if not download_model_bin.exists():
+                            # 缓存不完整，删除整个repo缓存目录并重试
+                            log_system(f"缓存不完整，删除并重新下载：{repo_cache_dir}", logging.INFO)
+                            shutil.rmtree(repo_cache_dir, ignore_errors=True)
                             model_source = snapshot_download(**download_kwargs)
                             download_model_bin = Path(model_source) / "model.bin"
                             if not download_model_bin.exists():
-                                # 缓存不完整，删除整个repo缓存目录并重试
-                                log_system(f"缓存不完整，删除并重新下载：{repo_cache_dir}", logging.INFO)
-                                shutil.rmtree(repo_cache_dir, ignore_errors=True)
-                                model_source = snapshot_download(**download_kwargs)
-                                download_model_bin = Path(model_source) / "model.bin"
-                                if not download_model_bin.exists():
-                                    raise RuntimeError(f"模型下载不完整：{model_source} 缺少 model.bin")
-                        finally:
-                            # 恢复原来的 endpoint
-                            if download_mirror:
-                                if old_endpoint:
-                                    os.environ["HF_ENDPOINT"] = old_endpoint
-                                else:
-                                    os.environ.pop("HF_ENDPOINT", None)
+                                raise RuntimeError(f"模型下载不完整：{model_source} 缺少 model.bin")
 
                         self.model_download_progress.emit(100.0, "完成")
                         self.model_download_finished.emit()
@@ -586,7 +577,7 @@ class AudioCapture(QObject):
                 self._save_debug_audio(audio_buffer, sample_rate, 0, "_debug", channels)
 
             # 转录配置 - 优化参数以提高准确率
-            # 添加面试场景提示词和 IT 技术热词（从配置读取）
+            # 添加场景提示词和热词（从配置读取）
             segments, info = self.stt_model.transcribe(
                 audio_float,
                 language='zh',
@@ -789,8 +780,8 @@ class AudioCapture(QObject):
             if p is not None:
                 try:
                     p.terminate()
-                except Exception:
-                    pass
+                except Exception as ex:
+                    log_system(str(ex), logging.ERROR)
 
     def stop(self):
         """停止音频捕获"""

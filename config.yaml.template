@@ -15,8 +15,9 @@ llm:
 
   # 提示词配置（从文件读取）
   prompts:
-    base: llm_system_prompt_base.txt
-
+    base: "你是一个熟悉计算机专业知识的Java工程师助手。"
+    words: 200-500
+    theme: Java技术面试
   # 持久 provider 配置
   provider:
     lmstudio:
@@ -33,7 +34,7 @@ llm:
 # STT 配置
 stt:
   model: medium
-  # STT 转录提示词（帮助识别面试场景的专业术语）
+  # STT 转录提示词（帮助识别场景的专业术语）
   initial_prompt: "面试场景，包含技术术语如 Java, Python, MySQL, Redis, Kafka, Docker, Kubernetes, 微服务，分布式系统，算法，数据结构等。"
   # STT 热词（提高识别准确率）
   hotwords: "Java Python MySQL Redis Kafka Docker Kubernetes Spring TensorFlow PyTorch 微服务 分布式 算法 数据结构 多线程 并发 API SDK HTTP TCP IP"
@@ -75,3 +76,9 @@ ui:
   transcription:
     # True=手动点"开始监听"；False=自动分句转录
     manual_mode: true
+  keyboard_hotkey: # 快捷键配置
+    overlay_visibility: Ctrl+F4
+    transcription_mode: Ctrl+F6
+    listening_toggled: Ctrl+F8
+    prev_caption: Ctrl+F7
+    next_caption: Ctrl+F9

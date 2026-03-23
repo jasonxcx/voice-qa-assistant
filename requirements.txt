@@ -15,7 +15,7 @@ openai>=1.0.0  # 兼容 Ollama/LM Studio
 dashscope>=1.14.0  # 阿里云通义千问 SDK
 httpx>=0.25.0  # HTTP 客户端
 
-# Markdown 简历解析
+# Markdown 文档解析
 mistune>=3.0.0
 PyYAML>=6.0  # 配置文件
 

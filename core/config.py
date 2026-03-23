@@ -212,7 +212,7 @@ class Config:
         """获取字幕窗口边框圆角大小"""
         return self.get("ui.overlay_border_radius", 12)
 
-    def _read_prompt_file(self, relative_path: str, default: str = "") -> str:
+    def _read_file(self, relative_path: str, default: str = "") -> str:
         """从文件读取提示词内容，如果文件不存在或读取失败则返回默认值"""
         if not relative_path:
             return default
@@ -237,9 +237,9 @@ class Config:
 
     @property
     def llm_system_prompt_base(self) -> str:
-        """获取 LLM 基础系统提示词（从文件读取）"""
-        prompt_file = self.get("llm.prompts.base", "")
-        return self._read_prompt_file(prompt_file, "你是一个熟悉计算机专业知识的Java工程师助手。")
+        """获取 LLM 基础系统提示词"""
+        return self.get("llm.prompts.base", "你是一个熟悉计算机专业知识的Java工程师助手。")
+
 
     @property
     def llm_temperature(self) -> float:
@@ -252,6 +252,16 @@ class Config:
         return self.get("llm.generation.max_completion_tokens", 500)
 
     @property
+    def llm_prompts_words(self) -> str:
+        """获取 LLM 提示词（从文件读取）"""
+        return self.get("llm.prompts.words", "200-500")
+
+    @property
+    def llm_prompts_theme(self) -> str:
+        """获取 LLM 提示词（从文件读取）"""
+        return self.get("llm.prompts.theme", "Java技术面试")
+
+    @property
     def llm_max_completion_tokens_stream(self) -> int:
         """获取 LLM 流式最大生成 token 数"""
         return self.get("llm.generation.max_completion_tokens_stream", 1000)
@@ -259,8 +269,31 @@ class Config:
     @property
     def llm_reasoning_effort(self) -> str:
         """获取 LLM 思考强度"""
-        return self.get("llm.generation.reasoning_effort", "none")
+        return self.get("llm.generation.reasoning_effort", "low")
 
+    @property
+    def hotkey_overlay_visibility(self) -> str:
+        """快捷键：显示/隐藏字幕窗口"""
+        return self.get("ui.keyboard_hotkey.overlay_visibility", "Ctrl+F4")
+
+    @property
+    def hotkey_transcription_mode(self) -> str:
+        """快捷键：切换自动/手动模式"""
+        return self.get("ui.keyboard_hotkey.transcription_mode", "Ctrl+F6")
+
+    @property
+    def hotkey_listening_toggled(self) -> str:
+        """快捷键：开始/结束监听"""
+        return self.get("ui.keyboard_hotkey.listening_toggled", "Ctrl+F8")
+
+    @property
+    def hotkey_prev_caption(self) -> str:
+        """快捷键：上一条字幕记录"""
+        return self.get("ui.keyboard_hotkey.prev_caption", "Ctrl+F7")
+    @property
+    def hotkey_next_caption(self) -> str:
+        """快捷键：下一条字幕记录"""
+        return self.get("ui.keyboard_hotkey.next_caption", "Ctrl+F9")
 
 # 全局配置实例
 _config: Optional[Config] = None

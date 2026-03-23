@@ -4,7 +4,7 @@
 - 背景完全透明
 - 顶部拖动条（可拖动窗口，双击隐藏）
 - 控制按钮：隐藏、字体变大、字体变小、监听控制
-- F12 全局快捷键显示/隐藏
+- Ctrl+F4 全局快捷键显示/隐藏
 - 鼠标拖动边缘调节窗口大小
 - 显示"等待音频输入..."占位符
 """
@@ -425,7 +425,7 @@ class OverlayWindow(QWidget):
         button_layout.setSpacing(6)
 
         self.hide_btn = QPushButton("📑 隐藏")
-        self.hide_btn.setToolTip("隐藏窗口 (F12 重新显示)")
+        self.hide_btn.setToolTip("隐藏窗口 (Ctrl+F4)")
         self.hide_btn.setFixedHeight(28)
         self.hide_btn.clicked.connect(self._on_hide_clicked)
         self.hide_btn.setStyleSheet(self._hide_button_stylesheet())
@@ -449,7 +449,7 @@ class OverlayWindow(QWidget):
         self.mode_btn.setStyleSheet(self._action_button_stylesheet())
 
         # 监听控制按钮（合并开始/停止为一个按钮）
-        self.listen_btn = QPushButton("▶ 开始监听")
+        self.listen_btn = QPushButton("▶ 开始监听 (Ctrl+F8)")
         self.listen_btn.setToolTip("开始/停止监听音频")
         self.listen_btn.setFixedHeight(28)
         self.listen_btn.clicked.connect(self._on_listen_toggled)
@@ -579,7 +579,7 @@ class OverlayWindow(QWidget):
         """设置全局键盘快捷键 - keyboard 库方案（Windows）
         
         快捷键列表：
-        - Ctrl + F5: 显示/隐藏字幕窗口
+        - Ctrl + F4: 显示/隐藏字幕窗口
         - Ctrl + F6: 切换自动/手动模式
         - Ctrl + F7: 上一条字幕记录
         - Ctrl + F8: 开始/结束监听
@@ -591,22 +591,29 @@ class OverlayWindow(QWidget):
         
         try:
             # 注册全局热键 - 使用独立方法避免 lambda 闭包问题
-            keyboard.add_hotkey('ctrl+f5', self._on_hotkey_f5)
-            keyboard.add_hotkey('ctrl+f6', self._on_hotkey_f6)
-            keyboard.add_hotkey('ctrl+f7', self._on_hotkey_f7)
-            keyboard.add_hotkey('ctrl+f8', self._on_hotkey_f8)
-            keyboard.add_hotkey('ctrl+f9', self._on_hotkey_f9)
+            keyboard.add_hotkey(self.config.hotkey_overlay_visibility, self._on_hotkey_toggle_visibility)
+            keyboard.add_hotkey(self.config.hotkey_transcription_mode, self._on_hotkey_transcription_mode)
+            keyboard.add_hotkey(self.config.hotkey_listening_toggled, self._on_hotkey_prev_caption)
+            keyboard.add_hotkey(self.config.hotkey_prev_caption, self._on_hotkey_listening_toggled)
+            keyboard.add_hotkey(self.config.hotkey_next_caption, self._on_hotkey_next_caption)
             
-            print("[OverlayWindow] 全局热键已注册：Ctrl+F5~F9 (keyboard)", flush=True)
+            print(f"[OverlayWindow] 全局热键已注册：{self.config.hotkey_overlay_visibility}、{self.config.hotkey_transcription_mode}、{self.config.hotkey_listening_toggled}、{self.config.hotkey_prev_caption}、{self.config.hotkey_next_caption}(keyboard)", flush=True)
         except Exception as e:
             print(f"[OverlayWindow] 全局热键注册失败：{e}", flush=True)
     
-    def _on_hotkey_f5(self):
-        """Ctrl+F5: 显示/隐藏字幕窗口"""
+    def _on_hotkey_toggle_visibility(self):
+        """快捷键: 显示/隐藏字幕窗口"""
         QTimer.singleShot(0, self._toggle_visibility)
+
+    def _toggle_visibility(self):
+        """切换窗口可见性（全局热键回调）"""
+        if self.isVisible():
+            self.hide()
+        else:
+            self.show()
     
-    def _on_hotkey_f6(self):
-        """Ctrl+F6: 切换自动/手动模式"""
+    def _on_hotkey_transcription_mode(self):
+        """快捷键: 切换自动/手动模式"""
         print(f"[OverlayWindow] Ctrl+F6 被按下，切换自动/手动模式，当前 _manual_transcription_mode={self._manual_transcription_mode}", flush=True)
         
         # 切换模式
@@ -617,7 +624,7 @@ class OverlayWindow(QWidget):
         if not self._manual_transcription_mode and self._listening:
             self.listeningStopped.emit()
             self._listening = False
-            self.listen_btn.setText("▶ 开始监听")
+            self.listen_btn.setText("▶ 开始监听 (Ctrl+F8)")
             self.listen_btn.setStyleSheet(self._listen_button_stylesheet())
         
         # 更新 UI
@@ -627,58 +634,33 @@ class OverlayWindow(QWidget):
         print(f"[OverlayWindow] Ctrl+F6 切换到 manual_mode={self._manual_transcription_mode}，发射 transcriptionModeChanged 信号", flush=True)
         QTimer.singleShot(0, lambda: self.transcriptionModeChanged.emit(self._manual_transcription_mode))
     
-    def _on_hotkey_f7(self):
-        """Ctrl+F7: 上一条字幕"""
+    def _on_hotkey_prev_caption(self):
+        """快捷键: 上一条字幕"""
         print(f"[OverlayWindow] Ctrl+F7 被按下，上一条字幕，current_page={self.caption_history.current_page}, pages={len(self.caption_history.pages)}", flush=True)
         if self.caption_history.pages:
             print("[OverlayWindow] 直接调用 caption_history._show_previous()", flush=True)
             self.caption_history._show_previous()
         else:
             print("[OverlayWindow] 没有字幕内容，无法翻页", flush=True)
-    
-    def _on_hotkey_f8(self):
-        """Ctrl+F8: 切换监听"""
+
+    def _on_hotkey_listening_toggled(self):
+        """快捷键: 切换监听"""
         print("[OverlayWindow] Ctrl+F8 被按下，切换监听", flush=True)
         QTimer.singleShot(0, self._emit_listening_toggled)
-    
-    def _on_hotkey_f9(self):
-        """Ctrl+F9: 下一条字幕"""
+
+    def _emit_listening_toggled(self):
+        """发射 listeningToggled 信号（在主线程执行）"""
+        print("[OverlayWindow] _emit_listening_toggled 被调用", flush=True)
+        self.listeningToggled.emit()
+
+    def _on_hotkey_next_caption(self):
+        """快捷键: 下一条字幕"""
         print(f"[OverlayWindow] Ctrl+F9 被按下，下一条字幕，current_page={self.caption_history.current_page}, pages={len(self.caption_history.pages)}", flush=True)
         if self.caption_history.pages:
             print("[OverlayWindow] 直接调用 caption_history._show_next()", flush=True)
             self.caption_history._show_next()
         else:
             print("[OverlayWindow] 没有字幕内容，无法翻页", flush=True)
-    
-    def _emit_listening_toggled(self):
-        """发射 listeningToggled 信号（在主线程执行）"""
-        print("[OverlayWindow] _emit_listening_toggled 被调用", flush=True)
-        self.listeningToggled.emit()
-    
-    def _toggle_visibility(self):
-        """切换窗口可见性（全局热键回调）"""
-        if self.isVisible():
-            self.hide()
-        else:
-            self.show()
-    
-    def _toggle_transcription_mode(self):
-        """切换自动/手动转录模式（全局热键回调）"""
-        # 通过信号通知主窗口切换模式
-        self.transcriptionModeChanged.emit(not self._manual_transcription_mode)
-    
-    def _prev_caption(self):
-        """上一条字幕记录（全局热键回调）"""
-        self.caption_history._show_previous()
-    
-    def _next_caption(self):
-        """下一条字幕记录（全局热键回调）"""
-        self.caption_history._show_next()
-    
-    def _toggle_listening(self):
-        """开始/结束监听（全局热键回调）"""
-        # 通过信号通知主窗口切换监听状态
-        self.listeningToggled.emit()
 
     def _on_drag_bar_double_click(self):
         """拖动条双击"""
@@ -868,7 +850,7 @@ class OverlayWindow(QWidget):
         if not self._manual_transcription_mode and self._listening:
             self.listeningStopped.emit()
             self._listening = False
-            self.listen_btn.setText("▶ 开始监听")
+            self.listen_btn.setText("▶ 开始监听 (Ctrl+F8)")
             self.listen_btn.setStyleSheet(self._listen_button_stylesheet())
 
         self._apply_transcription_mode_ui()
@@ -880,7 +862,7 @@ class OverlayWindow(QWidget):
             # 停止监听
             self.listeningStopped.emit()
             self._listening = False
-            self.listen_btn.setText("▶ 开始监听")
+            self.listen_btn.setText("▶ 开始监听 (Ctrl+F8)")
             self.listen_btn.setStyleSheet(self._listen_button_stylesheet())
         else:
             # 开始监听
