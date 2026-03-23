@@ -449,7 +449,7 @@ class OverlayWindow(QWidget):
         self.mode_btn.setStyleSheet(self._action_button_stylesheet())
 
         # 监听控制按钮（合并开始/停止为一个按钮）
-        self.listen_btn = QPushButton("▶ 开始监听 (Ctrl+F8)")
+        self.listen_btn = QPushButton("▶ 开始监听")
         self.listen_btn.setToolTip("开始/停止监听音频")
         self.listen_btn.setFixedHeight(28)
         self.listen_btn.clicked.connect(self._on_listen_toggled)
@@ -593,8 +593,8 @@ class OverlayWindow(QWidget):
             # 注册全局热键 - 使用独立方法避免 lambda 闭包问题
             keyboard.add_hotkey(self.config.hotkey_overlay_visibility, self._on_hotkey_toggle_visibility)
             keyboard.add_hotkey(self.config.hotkey_transcription_mode, self._on_hotkey_transcription_mode)
-            keyboard.add_hotkey(self.config.hotkey_listening_toggled, self._on_hotkey_prev_caption)
-            keyboard.add_hotkey(self.config.hotkey_prev_caption, self._on_hotkey_listening_toggled)
+            keyboard.add_hotkey(self.config.hotkey_listening_toggled, self._on_hotkey_listening_toggled)
+            keyboard.add_hotkey(self.config.hotkey_prev_caption, self._on_hotkey_prev_caption)
             keyboard.add_hotkey(self.config.hotkey_next_caption, self._on_hotkey_next_caption)
             
             print(f"[OverlayWindow] 全局热键已注册：{self.config.hotkey_overlay_visibility}、{self.config.hotkey_transcription_mode}、{self.config.hotkey_listening_toggled}、{self.config.hotkey_prev_caption}、{self.config.hotkey_next_caption}(keyboard)", flush=True)
@@ -614,7 +614,7 @@ class OverlayWindow(QWidget):
     
     def _on_hotkey_transcription_mode(self):
         """快捷键: 切换自动/手动模式"""
-        print(f"[OverlayWindow] Ctrl+F6 被按下，切换自动/手动模式，当前 _manual_transcription_mode={self._manual_transcription_mode}", flush=True)
+        print(f"[OverlayWindow] keyboard快捷键 切换自动/手动模式，当前 _manual_transcription_mode={self._manual_transcription_mode}", flush=True)
         
         # 切换模式
         self._manual_transcription_mode = not self._manual_transcription_mode
@@ -624,14 +624,14 @@ class OverlayWindow(QWidget):
         if not self._manual_transcription_mode and self._listening:
             self.listeningStopped.emit()
             self._listening = False
-            self.listen_btn.setText("▶ 开始监听 (Ctrl+F8)")
+            self.listen_btn.setText("▶ 开始监听")
             self.listen_btn.setStyleSheet(self._listen_button_stylesheet())
         
         # 更新 UI
         self._apply_transcription_mode_ui()
         
         # 发射信号通知主窗口
-        print(f"[OverlayWindow] Ctrl+F6 切换到 manual_mode={self._manual_transcription_mode}，发射 transcriptionModeChanged 信号", flush=True)
+        print(f"[OverlayWindow] 切换到 manual_mode={self._manual_transcription_mode}，发射 transcriptionModeChanged 信号", flush=True)
         QTimer.singleShot(0, lambda: self.transcriptionModeChanged.emit(self._manual_transcription_mode))
     
     def _on_hotkey_prev_caption(self):
@@ -850,7 +850,7 @@ class OverlayWindow(QWidget):
         if not self._manual_transcription_mode and self._listening:
             self.listeningStopped.emit()
             self._listening = False
-            self.listen_btn.setText("▶ 开始监听 (Ctrl+F8)")
+            self.listen_btn.setText("▶ 开始监听")
             self.listen_btn.setStyleSheet(self._listen_button_stylesheet())
 
         self._apply_transcription_mode_ui()
@@ -862,7 +862,7 @@ class OverlayWindow(QWidget):
             # 停止监听
             self.listeningStopped.emit()
             self._listening = False
-            self.listen_btn.setText("▶ 开始监听 (Ctrl+F8)")
+            self.listen_btn.setText("▶ 开始监听")
             self.listen_btn.setStyleSheet(self._listen_button_stylesheet())
         else:
             # 开始监听

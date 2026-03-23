@@ -290,7 +290,7 @@ class MainWindow(QMainWindow):
         button_layout.addWidget(self.start_btn)
         
         # 字幕窗口显示/隐藏按钮
-        self.caption_toggle_btn = QPushButton("📑 字幕（Ctrl+F4）")
+        self.caption_toggle_btn = QPushButton("📑 字幕")
         self.caption_toggle_btn.setMinimumHeight(45)
         self.caption_toggle_btn.setStyleSheet("""
             QPushButton {
@@ -1138,7 +1138,7 @@ class MainWindow(QMainWindow):
             self.audio_capture.stop_recording()
             # 同步 overlay 状态
             self.overlay._listening = False
-            self.overlay.listen_btn.setText("▶ 开始监听 Ctrl+F8")
+            self.overlay.listen_btn.setText("▶ 开始监听")
             self.overlay.listen_btn.setStyleSheet(self.overlay._listen_button_stylesheet())
             # 注意：不隐藏字幕窗口，让用户继续查看
         else:
