@@ -15,6 +15,7 @@ import sounddevice as sd
 from PyQt5.QtCore import Qt, QTimer, pyqtSlot, pyqtSignal
 from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import (
+    QButtonGroup,
     QComboBox,
     QFileDialog,
     QFormLayout,
@@ -26,6 +27,7 @@ from PyQt5.QtWidgets import (
     QMessageBox,
     QProgressDialog,
     QPushButton,
+    QRadioButton,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -53,6 +55,7 @@ class MainWindow(QMainWindow):
         
         self.resume_data: Optional[Dict[str, Any]] = None
         self.audio_devices: List[Dict] = []
+        self.audio_output_devices: List[Dict] = []
         self.is_model_loading = False
         self._stt_download_canceled = False
         
@@ -70,60 +73,30 @@ class MainWindow(QMainWindow):
         self._initialized = True
         print("[Debug] MainWindow 初始化完成", flush=True)
     
-    def _load_audio_devices(self):
-        """加载音频输入设备列表"""
-        try:
-            devices = sd.query_devices()
-            self.audio_devices = []
-            
-            for i, dev in enumerate(devices):
-                # 只添加输入设备（max_input_channels > 0）
-                if dev['max_input_channels'] > 0:
-                    self.audio_devices.append({
-                        'index': i,
-                        'name': dev['name'],
-                        'channels': dev['max_input_channels']
-                    })
-            
-            # 清空下拉框
-            self.audio_device_combo.clear()
-            
-            # 添加设备到下拉框
-            for dev in self.audio_devices:
-                self.audio_device_combo.addItem(f"{dev['name']} ({dev['channels']} 通道)")
-            
-            # 从配置恢复选择的设备
-            configured_index = self.config.audio_device_index
-            for i, dev in enumerate(self.audio_devices):
-                if dev['index'] == configured_index:
-                    self.audio_device_combo.setCurrentIndex(i)
-                    break
-            
-            # 连接设备切换信号
-            self.audio_device_combo.currentIndexChanged.connect(self._on_audio_device_changed)
-            
-            print(f"[Debug] 加载了 {len(self.audio_devices)} 个音频输入设备", flush=True)
-            
-        except Exception as e:
-            print(f"[Error] 加载音频设备失败：{e}", flush=True)
-            self.audio_devices = [{'index': 0, 'name': '默认设备', 'channels': 2}]
-            self.audio_device_combo.addItem("默认设备")
-    
     def _on_audio_device_changed(self, index):
-        """音频输入设备切换"""
-        if index < 0 or index >= len(self.audio_devices):
+        """音频设备切换 - 区分输入设备和输出设备"""
+        if index < 0:
             return
-        
-        device = self.audio_devices[index]
+
+        is_output = self.speaker_radio.isChecked()
+        devices = self.audio_output_devices if is_output else self.audio_devices
+
+        if index >= len(devices):
+            return
+
+        device = devices[index]
         device_index = device['index']
-        
-        # 更新配置
-        self.config.set("audio.input_device_index", device_index)
-        
+
+        # 更新配置 - 根据设备类型保存到不同的配置项
+        if is_output:
+            self.config.set("audio.output_device_index", device_index)
+            print(f"[Debug] 切换到输出设备：{device['name']} (索引：{device_index})", flush=True)
+        else:
+            self.config.set("audio.input_device_index", device_index)
+            print(f"[Debug] 切换到输入设备：{device['name']} (索引：{device_index})", flush=True)
+
         # 重启音量监控以使用新设备
         self.audio_capture.restart_monitoring()
-        
-        print(f"[Debug] 切换到音频设备：{device['name']} (索引：{device_index})", flush=True)
     
     def _init_ui(self):
         """初始化 UI"""
@@ -213,23 +186,48 @@ class MainWindow(QMainWindow):
         # 音频和音量（合并为一组）
         audio_group = QGroupBox("音频设置")
         audio_layout = QVBoxLayout(audio_group)
-        
+
         audio_form = QFormLayout()
-        
-        # 音频设备
+
+        # 设备类型选择（麦克风/扬声器）
+        device_type_layout = QHBoxLayout()
+        self.device_type_group = QButtonGroup(self)
+        self.mic_radio = QRadioButton("麦克风")
+        self.speaker_radio = QRadioButton("扬声器/耳机")
+        self.speaker_radio.setChecked(True)  # 默认优先监听会议声音输出
+        self.device_type_group.addButton(self.mic_radio, 0)
+        self.device_type_group.addButton(self.speaker_radio, 1)
+        self.mic_radio.toggled.connect(self._on_device_type_changed)
+        device_type_layout.addWidget(self.mic_radio)
+        device_type_layout.addWidget(self.speaker_radio)
+        device_type_layout.addStretch()
+        audio_form.addRow("监听源:", device_type_layout)
+
+        # 音频设备选择行（包含下拉框和刷新按钮）
+        device_select_layout = QHBoxLayout()
         self.audio_device_combo = QComboBox()
-        audio_form.addRow("输入设备:", self.audio_device_combo)
-        
+        self.audio_device_combo.setSizePolicy(
+            self.audio_device_combo.sizePolicy().horizontalPolicy(),
+            self.audio_device_combo.sizePolicy().verticalPolicy()
+        )
+        self.refresh_devices_btn = QPushButton("刷新")
+        self.refresh_devices_btn.setFixedWidth(60)
+        self.refresh_devices_btn.setFixedHeight(28)
+        self.refresh_devices_btn.clicked.connect(self._refresh_audio_devices)
+        device_select_layout.addWidget(self.audio_device_combo)
+        device_select_layout.addWidget(self.refresh_devices_btn)
+        audio_form.addRow("设备:", device_select_layout)
+
         # 音量监控
         self.volume_bar = QLabel()
         self.volume_bar.setMinimumHeight(20)
         self.volume_bar.setStyleSheet("background-color: #2D2D2D; border-radius: 4px;")
         audio_form.addRow("音量:", self.volume_bar)
-        
+
         self.volume_label = QLabel("音量：0%")
         self.volume_label.setStyleSheet("color: #9AA0A6; font-size: 11px;")
         audio_form.addRow("", self.volume_label)
-        
+
         audio_layout.addLayout(audio_form)
         layout.addWidget(audio_group)
         
@@ -376,26 +374,108 @@ class MainWindow(QMainWindow):
         self._update_ui_state()
     
     def _load_audio_devices(self):
-        """加载音频设备列表"""
+        """加载音频设备列表 - 支持输入设备和输出设备"""
         try:
             devices = sd.query_devices()
             self.audio_devices = []
-            self.audio_device_combo.clear()
-            
+            self.audio_output_devices = []
+
+            # 分离输入设备和输出设备
             for i, dev in enumerate(devices):
+                # 输入设备（麦克风）
                 if dev['max_input_channels'] > 0:
-                    device_name = f"{i}: {dev['name'][:40]} (通道:{dev['max_input_channels']})"
-                    self.audio_device_combo.addItem(device_name)
+                    device_name = f"{i}: {dev['name'][:40]} (输入:{dev['max_input_channels']})"
                     self.audio_devices.append({
                         'index': i,
                         'name': dev['name'],
-                        'channels': dev['max_input_channels']
+                        'channels': dev['max_input_channels'],
+                        'type': 'input'
                     })
-            
+                # 输出设备（扬声器/耳机）- 用于 loopback 监听
+                if dev['max_output_channels'] > 0:
+                    device_name = f"{i}: {dev['name'][:40]} (输出:{dev['max_output_channels']})"
+                    self.audio_output_devices.append({
+                        'index': i,
+                        'name': dev['name'],
+                        'channels': dev['max_output_channels'],
+                        'type': 'output'
+                    })
+
+            print(f"[Debug] 加载了 {len(self.audio_devices)} 个输入设备, {len(self.audio_output_devices)} 个输出设备", flush=True)
+
+            # 根据当前设备类型更新下拉框
+            self._update_device_combo()
+
         except Exception as e:
-            QMessageBox.warning(self, "设备扫描失败", f"无法获取音频设备列表：{e}")
-            self.audio_device_combo.addItem("1: 默认设备")
-            self.audio_devices = [{'index': 1, 'name': '默认设备', 'channels': 2}]
+            print(f"[Error] 加载音频设备失败：{e}", flush=True)
+            self.audio_devices = [{'index': 0, 'name': '默认设备', 'channels': 2, 'type': 'input'}]
+            self.audio_output_devices = [{'index': 0, 'name': '默认设备', 'channels': 2, 'type': 'output'}]
+            self._update_device_combo()
+
+    def _update_device_combo(self):
+        """根据设备类型更新下拉框显示"""
+        # 阻止信号触发
+        self.audio_device_combo.blockSignals(True)
+        self.audio_device_combo.clear()
+
+        # 根据当前选中的设备类型决定显示哪些设备
+        is_output = self.speaker_radio.isChecked()
+        devices = self.audio_output_devices if is_output else self.audio_devices
+
+        for dev in devices:
+            device_name = f"{dev['index']}: {dev['name'][:35]} ({'输出' if is_output else '输入'}:{dev['channels']})"
+            self.audio_device_combo.addItem(device_name)
+
+        # 从配置恢复选择的设备
+        if is_output:
+            configured_index = self.config.get("audio.output_device_index", None)
+        else:
+            configured_index = self.config.get("audio.input_device_index", None)
+
+        if configured_index is not None:
+            for i, dev in enumerate(devices):
+                if dev['index'] == configured_index:
+                    self.audio_device_combo.setCurrentIndex(i)
+                    break
+
+        self.audio_device_combo.blockSignals(False)
+
+        # 连接设备切换信号
+        try:
+            self.audio_device_combo.currentIndexChanged.disconnect()
+        except TypeError:
+            pass  # 信号未连接
+        self.audio_device_combo.currentIndexChanged.connect(self._on_audio_device_changed)
+
+    def _on_device_type_changed(self, checked):
+        """设备类型切换（麦克风/扬声器）"""
+        if not checked:
+            return
+
+        is_output = self.speaker_radio.isChecked()
+        print(f"[Debug] 切换设备类型: {'扬声器' if is_output else '麦克风'}", flush=True)
+
+        # 更新配置
+        self.config.set("audio.use_microphone", not is_output)
+
+        # 更新设备下拉框
+        self._update_device_combo()
+
+        # 重启音量监控以使用新设备类型
+        if hasattr(self, 'audio_capture') and self.audio_capture:
+            self.audio_capture.restart_monitoring()
+
+    def _refresh_audio_devices(self):
+        """刷新音频设备列表"""
+        print("[Debug] 刷新音频设备列表", flush=True)
+        self.refresh_devices_btn.setText("...")
+        self.refresh_devices_btn.setEnabled(False)
+
+        try:
+            self._load_audio_devices()
+        finally:
+            self.refresh_devices_btn.setText("刷新")
+            self.refresh_devices_btn.setEnabled(True)
     
     def _sync_ui_with_config(self):
         """将配置同步到 UI"""
@@ -439,10 +519,13 @@ class MainWindow(QMainWindow):
         compute_map = {"float32": 0, "float16": 1, "int8": 2}
         self.compute_type_combo.setCurrentIndex(compute_map.get(self.config.get("stt.local.compute_type", "float32"), 0))
 
-        for idx, dev in enumerate(self.audio_devices):
-            if dev['index'] == self.config.audio_device_index:
-                self.audio_device_combo.setCurrentIndex(idx)
-                break
+        # 同步音频设备类型选择
+        use_microphone = self.config.get("audio.use_microphone", False)
+        self.mic_radio.setChecked(use_microphone)
+        self.speaker_radio.setChecked(not use_microphone)
+
+        # 同步音频设备选择（在设备列表加载后）
+        # 设备下拉框会在 _update_device_combo 中根据当前类型自动选择正确的设备
 
     def _connect_signals(self):
         """连接信号"""
@@ -813,10 +896,18 @@ class MainWindow(QMainWindow):
         self.config.set("stt.local.compute_type", compute_type)
 
         # 安全获取音频设备索引，避免越界
+        is_output = self.speaker_radio.isChecked()
+        devices = self.audio_output_devices if is_output else self.audio_devices
         current_index = self.audio_device_combo.currentIndex()
-        if 0 <= current_index < len(self.audio_devices):
-            device_index = self.audio_devices[current_index]['index']
-            self.config.set("audio.input_device_index", device_index)
+        if 0 <= current_index < len(devices):
+            device_index = devices[current_index]['index']
+            if is_output:
+                self.config.set("audio.output_device_index", device_index)
+            else:
+                self.config.set("audio.input_device_index", device_index)
+
+        # 保存设备类型配置
+        self.config.set("audio.use_microphone", not is_output)
 
         # 更新临时配置
         self.config.set("llm.base_url", self.llm_url.text())
@@ -865,6 +956,9 @@ class MainWindow(QMainWindow):
             self.stt_device_combo.setEnabled(False)
             self.compute_type_combo.setEnabled(False)
             self.audio_device_combo.setEnabled(False)
+            self.mic_radio.setEnabled(False)
+            self.speaker_radio.setEnabled(False)
+            self.refresh_devices_btn.setEnabled(False)
             # LLM 配置在录音时仍可修改
             # self.llm_combo.setEnabled(False)
         else:
@@ -887,6 +981,9 @@ class MainWindow(QMainWindow):
             self.stt_device_combo.setEnabled(True)
             self.compute_type_combo.setEnabled(True)
             self.audio_device_combo.setEnabled(True)
+            self.mic_radio.setEnabled(True)
+            self.speaker_radio.setEnabled(True)
+            self.refresh_devices_btn.setEnabled(True)
             self.llm_combo.setEnabled(True)
             self.overlay.set_listen_button_enabled(False)
             self.status_label.setText("● 就绪（无模型）")

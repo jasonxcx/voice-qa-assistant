@@ -322,12 +322,12 @@ class AudioCapture(QObject):
     
     def restart_monitoring(self):
         """重启音量监控（用于切换设备后）"""
-        print(f"[AudioCapture] restart_monitoring 被调用，当前 monitoring={self._monitoring}", flush=True)
+        log_system(f"[AudioCapture] restart_monitoring 被调用，当前 monitoring={self._monitoring}, 配置输出设备索引={self.config.get('audio.output_device_index', '未配置')}, 输入设备索引={self.config.get('audio.input_device_index', '未配置')}", logging.INFO)
         self.stop_monitoring()
         time.sleep(0.1)  # 短暂等待确保旧线程已停止
-        print(f"[AudioCapture] 重启音量监控，当前配置设备索引={self.config.audio_device_index}", flush=True)
+        log_system(f"[AudioCapture] 重启音量监控", logging.INFO)
         self.start_monitoring()
-        print("[AudioCapture] 音量监控已重启", flush=True)
+        log_system("[AudioCapture] 音量监控已重启", logging.INFO)
 
     def stop_monitoring(self):
         """停止音量监控"""
@@ -413,8 +413,8 @@ class AudioCapture(QObject):
 
             p.terminate()
 
-            log_system(f"使用 WASAPI loopback 设备：{device_index}", logging.INFO)
-            print(f"[AudioCapture] 使用设备：{device_index}, 采样率：{sample_rate}, 通道：{channels}")
+            log_system(f"使用 WASAPI loopback 设备：{device_index}，设备名称：{device_info['name']}", logging.INFO)
+            print(f"[AudioCapture] 使用设备：{device_index} ({device_info['name']})，采样率：{sample_rate}，通道：{channels}")
 
             # 重新创建 PyAudio 实例
             p = pyaudio.PyAudio()
@@ -651,69 +651,193 @@ class AudioCapture(QObject):
             print(f"[AudioCapture] 保存调试音频失败：{e}", flush=True)
 
     def _get_loopback_device(self, pyaudio_instance):
-        """获取 WASAPI loopback 设备索引"""
+        """获取 WASAPI loopback 设备索引 - 优先使用输出设备配置"""
         try:
-            # 1. 首先尝试使用配置的设备索引
-            configured = self.config.audio_device_index
-            if configured is not None:
-                try:
-                    info = pyaudio_instance.get_device_info_by_index(configured)
-                    if info['maxInputChannels'] > 0:
-                        log_system(f"使用配置的设备：{info['name']} (索引:{configured})", logging.INFO)
-                        return configured
-                except Exception:
-                    pass
+            # 检查是否应该使用麦克风（输入设备）还是监听输出设备
+            use_microphone = self.config.get("audio.use_microphone", False)
 
-            # 2. 查找标记为 loopback 的设备
+            if not use_microphone:
+                # 监听输出设备模式 - 优先使用用户选择的输出设备对应的 loopback
+                configured_output = self.config.get("audio.output_device_index", None)
+                resolved_loopback = self._resolve_output_loopback_device(
+                    pyaudio_instance,
+                    configured_output,
+                )
+                if resolved_loopback is not None:
+                    return resolved_loopback['index']
+
+                # 1. 回退到默认的 WASAPI loopback
+                try:
+                    loopback = pyaudio_instance.get_default_wasapi_loopback()
+                    log_system(f"使用默认 WASAPI loopback: {loopback['name']} (索引:{loopback['index']})", logging.INFO)
+                    return loopback['index']
+                except Exception as e:
+                    log_system(f"无法获取默认 WASAPI loopback 设备: {e}", logging.WARNING)
+
+                # 2. 查找标记为 loopback 的设备
+                for info in self._iter_loopback_devices(pyaudio_instance):
+                    if info.get('maxInputChannels', 0) > 0:
+                        log_system(f"找到 Loopback 设备：{info['name']} (索引:{info['index']})", logging.INFO)
+                        return info['index']
+
+                # 3. 查找立体声混音或其他混音设备
+                device_count = pyaudio_instance.get_device_count()
+                for i in range(device_count):
+                    try:
+                        info = pyaudio_instance.get_device_info_by_index(i)
+                        name = info['name'].lower()
+
+                        if info['maxInputChannels'] > 0:
+                            if 'stereo mix' in name or 'mix' in name or 'what you hear' in name or 'wave out' in name:
+                                log_system(f"找到立体声混音设备：{info['name']} (索引:{i})", logging.INFO)
+                                return i
+                    except Exception:
+                        pass
+
+                # 4. 如果配置了输出设备索引，尝试将其作为最后的选择
+                if configured_output is not None:
+                    try:
+                        info = pyaudio_instance.get_device_info_by_index(configured_output)
+                        # 对于某些系统，输出设备可能也有输入通道用于 loopback
+                        if info['maxInputChannels'] > 0:
+                            log_system(f"使用配置的输出设备进行监听：{info['name']} (索引:{configured_output})", logging.INFO)
+                            return configured_output
+                    except Exception as e:
+                        log_system(f"配置的输出设备不可用：{configured_output}, 错误: {e}", logging.WARNING)
+
+            else:
+                # 使用麦克风模式 - 优先使用配置的输入设备
+                configured_input = self.config.get("audio.input_device_index", None)
+                if configured_input is not None:
+                    try:
+                        info = pyaudio_instance.get_device_info_by_index(configured_input)
+                        if info['maxInputChannels'] > 0:
+                            log_system(f"使用配置的输入设备（麦克风）：{info['name']} (索引:{configured_input})", logging.INFO)
+                            return configured_input
+                    except Exception as e:
+                        log_system(f"配置的输入设备不可用：{configured_input}, 错误: {e}", logging.WARNING)
+
+                # 查找默认输入设备
+                try:
+                    default_input = pyaudio_instance.get_default_input_device_info()
+                    log_system(f"使用默认输入设备：{default_input['name']} (索引:{default_input['index']})", logging.INFO)
+                    return default_input['index']
+                except Exception as e:
+                    log_system(f"无法获取默认输入设备: {e}", logging.WARNING)
+
+            # 最后的备选方案：查找任何可用的输入设备
             device_count = pyaudio_instance.get_device_count()
             for i in range(device_count):
                 try:
                     info = pyaudio_instance.get_device_info_by_index(i)
-                    name = info['name'].lower()
-
-                    # 查找 loopback 设备（isLoopbackDevice 标记或名称包含 Loopback）
-                    is_loopback = info.get('isLoopbackDevice', False) or 'loopback' in name
-
-                    if is_loopback and info['maxInputChannels'] > 0:
-                        log_system(f"找到 Loopback 设备：{info['name']} (索引:{i})", logging.INFO)
+                    if info['maxInputChannels'] > 0:
+                        log_system(f"找到备选输入设备：{info['name']} (索引:{i})", logging.INFO)
                         return i
                 except Exception:
                     pass
 
-            # 3. 尝试使用默认的 WASAPI loopback
-            try:
-                loopback = pyaudio_instance.get_default_wasapi_loopback()
-                log_system(f"使用默认 loopback: {loopback['name']} (索引:{loopback['index']})", logging.INFO)
-                return loopback['index']
-            except Exception:
-                pass
-
-            # 4. 查找 Realtek 立体声混音设备
-            for i in range(device_count):
-                try:
-                    info = pyaudio_instance.get_device_info_by_index(i)
-                    name = info['name'].lower()
-
-                    if info['maxInputChannels'] > 0:
-                        if 'realtek' in name or 'stereo mix' in name or 'mix' in name:
-                            log_system(f"找到立体声混音设备：{info['name']} (索引:{i})", logging.INFO)
-                            return i
-                except Exception:
-                    pass
-
         except Exception as e:
-            log_system(f"无法获取音频设备：{e}", logging.WARNING)
+            log_system(f"无法获取音频设备：{e}", logging.ERROR)
 
         # 默认返回 0
+        log_system("未能找到合适的音频设备，使用默认设备索引 0", logging.WARNING)
         return 0
 
+    @staticmethod
+    def _normalize_device_name(name: str) -> str:
+        normalized = (name or "").lower()
+        normalized = normalized.replace("wasapi loopback", " ")
+        normalized = normalized.replace("loopback", " ")
+        normalized = re.sub(r"[\[\]\(\)\-_/]+", " ", normalized)
+        normalized = re.sub(r"\s+", " ", normalized).strip()
+        return normalized
+
+    def _iter_loopback_devices(self, pyaudio_instance):
+        generator = getattr(pyaudio_instance, "get_loopback_device_info_generator", None)
+        if callable(generator):
+            try:
+                yield from generator()
+                return
+            except Exception as e:
+                log_system(f"枚举 loopback 设备失败，回退到全量扫描: {e}", logging.DEBUG)
+
+        device_count = pyaudio_instance.get_device_count()
+        for i in range(device_count):
+            try:
+                info = pyaudio_instance.get_device_info_by_index(i)
+            except Exception:
+                continue
+
+            name = info.get("name", "").lower()
+            is_loopback = info.get("isLoopbackDevice", False) or "loopback" in name
+            if is_loopback:
+                yield info
+
+    def _resolve_output_loopback_device(self, pyaudio_instance, configured_output):
+        if configured_output is None:
+            return None
+
+        try:
+            configured_output = int(configured_output)
+        except (TypeError, ValueError):
+            log_system(f"输出设备索引无效: {configured_output}", logging.WARNING)
+            return None
+
+        try:
+            output_info = pyaudio_instance.get_device_info_by_index(configured_output)
+        except Exception as e:
+            log_system(f"读取配置的输出设备失败: {configured_output}, 错误: {e}", logging.WARNING)
+            return None
+
+        if output_info.get("isLoopbackDevice", False) and output_info.get("maxInputChannels", 0) > 0:
+            log_system(
+                f"配置的输出设备本身就是 loopback：{output_info['name']} (索引:{output_info['index']})",
+                logging.INFO,
+            )
+            return output_info
+
+        resolver = getattr(pyaudio_instance, "get_wasapi_loopback_analogue_by_index", None)
+        if callable(resolver):
+            try:
+                loopback_info = resolver(configured_output)
+                log_system(
+                    f"使用所选输出设备对应的 WASAPI loopback：{loopback_info['name']} (索引:{loopback_info['index']})",
+                    logging.INFO,
+                )
+                return loopback_info
+            except Exception as e:
+                log_system(
+                    f"无法直接解析输出设备 {output_info['name']} 的 loopback，尝试名称匹配: {e}",
+                    logging.DEBUG,
+                )
+
+        normalized_output_name = self._normalize_device_name(output_info.get("name", ""))
+        output_host_api = output_info.get("hostApi")
+        for loopback_info in self._iter_loopback_devices(pyaudio_instance):
+            loopback_name = self._normalize_device_name(loopback_info.get("name", ""))
+            same_host_api = output_host_api is None or loopback_info.get("hostApi") == output_host_api
+            if not same_host_api:
+                continue
+            if normalized_output_name and (
+                normalized_output_name in loopback_name or loopback_name in normalized_output_name
+            ):
+                log_system(
+                    f"通过名称匹配到所选输出设备的 loopback：{loopback_info['name']} (索引:{loopback_info['index']})",
+                    logging.INFO,
+                )
+                return loopback_info
+
+        log_system(f"未找到输出设备 {output_info['name']} 对应的 loopback，继续回退逻辑", logging.WARNING)
+        return None
+
     def _monitor_volume(self):
-        """监控音频音量（使用 pyaudiowpatch）"""
+        """监控音频音量（使用 pyaudiowpatch）- 现在与主录音线程共享相同的设备逻辑"""
         p = None
         stream = None
         try:
+            # 使用与主录音线程相同的设备选择逻辑
             p = pyaudio.PyAudio()
-            
+
             while self._monitoring:
                 try:
                     # 每次循环都重新获取设备索引（支持运行时切换）
@@ -734,7 +858,7 @@ class AudioCapture(QObject):
                         frames_per_buffer=1024
                     )
 
-                    log_system(f"音量监控启动：设备 {device_index}, 通道 {channels}", logging.DEBUG)
+                    log_system(f"音量监控启动：设备 {device_index}, 通道 {channels}, 名称: {device_info['name']}", logging.DEBUG)
 
                     # 音量监控主循环
                     while self._monitoring:
@@ -767,7 +891,7 @@ class AudioCapture(QObject):
                         except Exception:
                             pass
                     stream = None
-                    
+
                 # 如果仍在监控中，重启以使用新设备
                 if self._monitoring:
                     time.sleep(0.1)

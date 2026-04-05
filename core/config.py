@@ -159,12 +159,28 @@ class Config:
 
     @property
     def audio_device_index(self) -> int:
+        """获取音频输入设备索引 - 现在优先使用输出设备索引"""
+        # 如果配置了输出设备，则优先使用它（用于监听扬声器等输出）
+        output_device = self.get("audio.output_device_index", None)
+        if output_device is not None:
+            return output_device
+
+        # 否则使用输入设备
+        return self.get("audio.input_device_index", 1)
+
+    @property
+    def audio_output_device_index(self) -> int:
+        """获取音频输出设备索引"""
+        return self.get("audio.output_device_index", 5)
+
+    @property
+    def audio_input_device_index(self) -> int:
         """获取音频输入设备索引"""
         return self.get("audio.input_device_index", 1)
 
     @property
     def use_microphone(self) -> bool:
-        """是否使用麦克风"""
+        """是否使用麦克风（如果为false，表示优先使用输出设备如扬声器进行监听）"""
         return self.get("audio.use_microphone", False)
 
     @property
