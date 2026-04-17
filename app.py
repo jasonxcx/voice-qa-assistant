@@ -5,16 +5,15 @@
 - 监听会议软件音频
 - 实时语音转文字（Faster-Whisper GPU 加速）
 - 大模型生成回答（支持 Qwen/Ollama）
-- PyQt5 透明字幕窗口显示
+- PySide6 透明字幕窗口显示
 """
 
 import asyncio
 import sys
 
-from PyQt5.QtCore import QThread
-from PyQt5.QtWidgets import QApplication
-from PyQt5.QtGui import QIcon
-from PyQt5.QtWidgets import QApplication
+from PySide6.QtCore import QThread
+from PySide6.QtWidgets import QApplication
+from PySide6.QtGui import QIcon
 
 from core.audio_capture import AudioCapture
 from core.config import Config, get_config

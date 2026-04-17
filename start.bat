@@ -25,7 +25,7 @@ if not exist config.yaml (
 )
 
 echo [2/4] 检查依赖...
-python -c "import PyQt5" >nul 2>&1
+python -c "import PySide6" >nul 2>&1
 if errorlevel 1 (
     echo [安装] 正在安装依赖，请稍候...
     pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple

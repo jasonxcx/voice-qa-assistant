@@ -12,9 +12,9 @@ from typing import Any, Dict, List, Optional
 
 import requests
 import sounddevice as sd
-from PyQt5.QtCore import Qt, QTimer, pyqtSlot, pyqtSignal
-from PyQt5.QtGui import QIcon
-from PyQt5.QtWidgets import (
+from PySide6.QtCore import Qt, QTimer, Slot, Signal
+from PySide6.QtGui import QIcon
+from PySide6.QtWidgets import (
     QButtonGroup,
     QComboBox,
     QFileDialog,
@@ -42,9 +42,9 @@ class MainWindow(QMainWindow):
     """主窗口"""
 
     # 信号用于线程间通信
-    token_signal = pyqtSignal(str, int)  # token, page_index
-    complete_signal = pyqtSignal(str)    # answer
-    error_signal = pyqtSignal(str)       # error_msg
+    token_signal = Signal(str, int)  # token, page_index
+    complete_signal = Signal(str)    # answer
+    error_signal = Signal(str)       # error_msg
 
     def __init__(self, overlay_window, audio_capture, llm_client):
         super().__init__()
@@ -197,7 +197,8 @@ class MainWindow(QMainWindow):
         self.speaker_radio.setChecked(True)  # 默认优先监听会议声音输出
         self.device_type_group.addButton(self.mic_radio, 0)
         self.device_type_group.addButton(self.speaker_radio, 1)
-        self.mic_radio.toggled.connect(self._on_device_type_changed)
+        # 使用 QButtonGroup 的信号，捕获两个 radio button 的状态变化
+        self.device_type_group.idToggled.connect(self._on_device_type_changed)
         device_type_layout.addWidget(self.mic_radio)
         device_type_layout.addWidget(self.speaker_radio)
         device_type_layout.addStretch()
@@ -432,11 +433,22 @@ class MainWindow(QMainWindow):
         else:
             configured_index = self.config.get("audio.input_device_index", None)
 
+        found_configured = False
         if configured_index is not None:
             for i, dev in enumerate(devices):
                 if dev['index'] == configured_index:
                     self.audio_device_combo.setCurrentIndex(i)
+                    found_configured = True
                     break
+
+        # 如果配置中没有设备索引，保存第一个设备作为默认值
+        if not found_configured and len(devices) > 0:
+            first_device = devices[0]
+            if is_output:
+                self.config.set("audio.output_device_index", first_device['index'])
+            else:
+                self.config.set("audio.input_device_index", first_device['index'])
+            print(f"[Debug] 自动保存默认设备：{first_device['name']} (索引：{first_device['index']})", flush=True)
 
         self.audio_device_combo.blockSignals(False)
 
@@ -447,13 +459,15 @@ class MainWindow(QMainWindow):
             pass  # 信号未连接
         self.audio_device_combo.currentIndexChanged.connect(self._on_audio_device_changed)
 
-    def _on_device_type_changed(self, checked):
-        """设备类型切换（麦克风/扬声器）"""
+    def _on_device_type_changed(self, button_id, checked):
+        """设备类型切换（麦克风/扬声器）- QButtonGroup.idToggled 信号"""
+        # 只处理 checked=True 的信号（选中事件）
         if not checked:
             return
 
-        is_output = self.speaker_radio.isChecked()
-        print(f"[Debug] 切换设备类型: {'扬声器' if is_output else '麦克风'}", flush=True)
+        # button_id: 0 = mic_radio, 1 = speaker_radio
+        is_output = (button_id == 1)  # speaker_radio 的 ID 是 1
+        print(f"[Debug] 切换设备类型: {'扬声器' if is_output else '麦克风'} (button_id={button_id})", flush=True)
 
         # 更新配置
         self.config.set("audio.use_microphone", not is_output)
@@ -519,13 +533,17 @@ class MainWindow(QMainWindow):
         compute_map = {"float32": 0, "float16": 1, "int8": 2}
         self.compute_type_combo.setCurrentIndex(compute_map.get(self.config.get("stt.local.compute_type", "float32"), 0))
 
-        # 同步音频设备类型选择
+# 同步音频设备类型选择（阻止信号避免初始化时错误触发）
         use_microphone = self.config.get("audio.use_microphone", False)
+        self.mic_radio.blockSignals(True)
+        self.speaker_radio.blockSignals(True)
         self.mic_radio.setChecked(use_microphone)
         self.speaker_radio.setChecked(not use_microphone)
-
-        # 同步音频设备选择（在设备列表加载后）
-        # 设备下拉框会在 _update_device_combo 中根据当前类型自动选择正确的设备
+        self.mic_radio.blockSignals(False)
+        self.speaker_radio.blockSignals(False)
+        
+        # 手动触发设备列表更新（因为阻止了信号）
+        self._update_device_combo()
 
     def _connect_signals(self):
         """连接信号"""
@@ -1319,7 +1337,7 @@ class MainWindow(QMainWindow):
             print(f"[DEBUG] _generate_and_show_answer_stream: error={e}", flush=True)
             self.error_signal.emit(error_msg)
 
-    @pyqtSlot(str, int)
+    @Slot(str, int)
     def _on_token_update(self, token: str, page_index: int):
         """处理LLM token更新（在主线程中调用）"""
         # 获取当前显示的文本并追加新token
@@ -1327,13 +1345,13 @@ class MainWindow(QMainWindow):
         new_text = current_text + token
         self.overlay.caption_history.update_answer_streaming(new_text, page_index)
 
-    @pyqtSlot(str)
+    @Slot(str)
     def _on_generation_complete(self, answer: str):
         """生成完成 - 更新状态"""
         self.status_label.setText("● 就绪")
         self.status_label.setStyleSheet(f"color: {STATUS_COLORS['idle']};")
 
-    @pyqtSlot(str)
+    @Slot(str)
     def _on_llm_error_slot(self, error_msg: str):
         """LLM 错误处理（槽函数版本）"""
         log_system(error_msg, logging.ERROR)

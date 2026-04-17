@@ -11,7 +11,7 @@ import re
 import shutil
 from pathlib import Path
 from typing import Optional, List
-from PyQt5.QtCore import pyqtSignal, QObject
+from PySide6.QtCore import Signal, QObject
 
 from core.logger import log_system, log_stt
 
@@ -20,20 +20,20 @@ class AudioCapture(QObject):
     """音频捕获和 STT 转换 - 使用 PyAudio + Faster-Whisper"""
 
     # Qt 信号
-    transcription_ready = pyqtSignal(str)  # 转录文本就绪
-    real_time_update = pyqtSignal(str)     # 实时转录更新
-    recording_started = pyqtSignal()       # 开始录音
-    recording_stopped = pyqtSignal()       # 停止录音
-    error_occurred = pyqtSignal(str)       # 错误发生
-    volume_update = pyqtSignal(float)      # 音量更新 (0.0 - 1.0)
-    transcription_completed = pyqtSignal(str)  # 手动转录完成
-    model_loading_started = pyqtSignal()   # 模型开始加载
-    model_loaded = pyqtSignal()            # 模型加载完成
-    model_unloaded = pyqtSignal()          # 模型已卸载
-    model_download_started = pyqtSignal(str)
-    model_download_progress = pyqtSignal(float, str)
-    model_download_finished = pyqtSignal()
-    model_download_failed = pyqtSignal(str)
+    transcription_ready = Signal(str)  # 转录文本就绪
+    real_time_update = Signal(str)     # 实时转录更新
+    recording_started = Signal()       # 开始录音
+    recording_stopped = Signal()       # 停止录音
+    error_occurred = Signal(str)       # 错误发生
+    volume_update = Signal(float)      # 音量更新 (0.0 - 1.0)
+    transcription_completed = Signal(str)  # 手动转录完成
+    model_loading_started = Signal()   # 模型开始加载
+    model_loaded = Signal()            # 模型加载完成
+    model_unloaded = Signal()          # 模型已卸载
+    model_download_started = Signal(str)
+    model_download_progress = Signal(float, str)
+    model_download_finished = Signal()
+    model_download_failed = Signal(str)
 
     def __init__(self, config):
         super().__init__()
@@ -322,9 +322,11 @@ class AudioCapture(QObject):
     
     def restart_monitoring(self):
         """重启音量监控（用于切换设备后）"""
-        log_system(f"[AudioCapture] restart_monitoring 被调用，当前 monitoring={self._monitoring}, 配置输出设备索引={self.config.get('audio.output_device_index', '未配置')}, 输入设备索引={self.config.get('audio.input_device_index', '未配置')}", logging.INFO)
+        log_system(f"[AudioCapture] restart_monitoring 被调用，当前 monitoring={self._monitoring}, use_microphone={self.config.get('audio.use_microphone', False)}", logging.INFO)
         self.stop_monitoring()
-        time.sleep(0.1)  # 短暂等待确保旧线程已停止
+        # 等待旧线程完全停止（最多 2 秒）
+        if self._volume_thread and self._volume_thread.is_alive():
+            self._volume_thread.join(timeout=2.0)
         log_system(f"[AudioCapture] 重启音量监控", logging.INFO)
         self.start_monitoring()
         log_system("[AudioCapture] 音量监控已重启", logging.INFO)

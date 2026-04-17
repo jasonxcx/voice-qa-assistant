@@ -8,12 +8,12 @@
 - 鼠标拖动边缘调节窗口大小
 - 显示"等待音频输入..."占位符
 """
-from PyQt5.QtWidgets import (
+from PySide6.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton, QScrollArea,
     QGraphicsDropShadowEffect, QSizeGrip
 )
-from PyQt5.QtCore import Qt, QPoint, QTimer, pyqtSignal, QEvent, QPropertyAnimation, QEasingCurve, QRect
-from PyQt5.QtGui import QFont, QColor, QCursor
+from PySide6.QtCore import Qt, QPoint, QTimer, Signal, QEvent, QPropertyAnimation, QEasingCurve, QRect
+from PySide6.QtGui import QFont, QColor, QCursor
 from collections import deque
 
 try:
@@ -248,7 +248,7 @@ class CaptionHistory(QWidget):
 class DragBar(QWidget):
     """顶部拖动条 - 支持拖动和双击隐藏"""
 
-    double_clicked = pyqtSignal()
+    double_clicked = Signal()
 
     def __init__(self, parent=None, config=None):
         super().__init__(parent)
@@ -338,12 +338,12 @@ class OverlayWindow(QWidget):
     """透明字幕窗口 - 支持鼠标调节大小"""
 
     # 可见性变化信号
-    visibilityChanged = pyqtSignal(bool)
+    visibilityChanged = Signal(bool)
     # 监听控制信号
-    listeningStarted = pyqtSignal()
-    listeningStopped = pyqtSignal()
-    transcriptionModeChanged = pyqtSignal(bool)  # True=手动，False=自动
-    listeningToggled = pyqtSignal()  # 全局快捷键切换监听信号
+    listeningStarted = Signal()
+    listeningStopped = Signal()
+    transcriptionModeChanged = Signal(bool)  # True=手动，False=自动
+    listeningToggled = Signal()  # 全局快捷键切换监听信号
     sizes = [8, 12, 16, 20, 24, 28, 32, 36, 40]
 
     def __init__(self, config):
@@ -726,7 +726,7 @@ class OverlayWindow(QWidget):
     def eventFilter(self, obj, event):
         """事件过滤器 - 处理 content_widget 的鼠标事件以支持 resize"""
         # 只处理 content_widget 的鼠标按下事件
-        if obj == self.content_widget and event.type() == event.MouseButtonPress and event.button() == Qt.LeftButton:
+        if obj == self.content_widget and event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.LeftButton:
             # 使用全局坐标检测是否在调节区域内
             cursor_global_pos = QCursor.pos()
             window_top_left = self.mapToGlobal(QPoint(0, 0))

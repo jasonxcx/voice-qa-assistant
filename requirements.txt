@@ -1,6 +1,5 @@
-# PyQt5 UI
-PyQt5>=5.15.0
-PyQt5-sip>=12.13.0
+# PySide6 UI (Qt for Python, LGPL 许可证)
+PySide6>=6.5.0
 keyboard>=0.13.5    # 全局键盘快捷键支持（Windows）
 
 # 音频捕获
