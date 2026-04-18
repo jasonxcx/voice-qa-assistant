@@ -7,14 +7,16 @@
 - Ctrl+F4 全局快捷键显示/隐藏
 - 鼠标拖动边缘调节窗口大小
 - 显示"等待音频输入..."占位符
+- 长文本支持滚动，连续换行合并为一次
 """
+import re
+
+from PySide6.QtCore import Qt, QPoint, QTimer, Signal, QEvent, QRect
+from PySide6.QtGui import QFont, QColor, QCursor
 from PySide6.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton, QScrollArea,
-    QGraphicsDropShadowEffect, QSizeGrip
+    QGraphicsDropShadowEffect
 )
-from PySide6.QtCore import Qt, QPoint, QTimer, Signal, QEvent, QPropertyAnimation, QEasingCurve, QRect
-from PySide6.QtGui import QFont, QColor, QCursor
-from collections import deque
 
 try:
     import keyboard
@@ -44,16 +46,43 @@ class CaptionHistory(QWidget):
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(6)
 
+        # 滚动区域 - 包裹内容标签，使长文本可滚动
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.scroll_area.setStyleSheet("""
+            QScrollArea {
+                background-color: transparent;
+                border: none;
+            }
+            QScrollBar:vertical {
+                background-color: rgba(255, 255, 255, 30);
+                width: 8px;
+                border-radius: 4px;
+            }
+            QScrollBar::handle:vertical {
+                background-color: rgba(255, 255, 255, 100);
+                border-radius: 4px;
+                min-height: 20px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background-color: rgba(255, 255, 255, 150);
+            }
+        """)
+        
         # 内容标签 - 初始显示占位符
         self.content_label = QLabel(self._placeholder_text)
         self.content_label.setObjectName("contentLabel")
         self.content_label.setAlignment(Qt.AlignTop | Qt.AlignLeft)
         self.content_label.setWordWrap(True)
         self.content_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        self.content_label.setMinimumHeight(60)
         self._set_placeholder_style()
         self._update_font()
-        layout.addWidget(self.content_label, 1)
+        
+        # 将内容标签放入滚动区域
+        self.scroll_area.setWidget(self.content_label)
+        layout.addWidget(self.scroll_area, 1)
 
         # 翻页控制已移动到 OverlayWindow - 只保留按钮引用
         self.prev_btn = QPushButton("◀")
@@ -171,6 +200,30 @@ class CaptionHistory(QWidget):
         """更新最后一个 answer 条目（用于流式更新）"""
         self.update_answer_streaming(new_text)
 
+    def _extract_display_content(self, text: str) -> str:
+        """提取显示内容：过滤 <think> 标签内的思考过程
+        
+        Args:
+            text: 原始文本
+            
+        Returns:
+            用于显示的文本（移除 <think>...</think> 内容）
+        """
+        if not text:
+            return text
+        
+        # 使用正则移除 <think>...</think> 标签及其内容
+        # 支持多种格式：<think>, <thinking>, <|think|> 等
+        cleaned_text = re.sub(r'<think[^>]*>.*?</think>', '', text, flags=re.DOTALL | re.IGNORECASE)
+        cleaned_text = re.sub(r'<thinking[^>]*>.*?</thinking>', '', cleaned_text, flags=re.DOTALL | re.IGNORECASE)
+        cleaned_text = re.sub(r'<\|think\|>.*?</\|think\|>', '', cleaned_text, flags=re.DOTALL | re.IGNORECASE)
+        cleaned_text = re.sub(r'<\|thinking\|>.*?</\|thinking\|>', '', cleaned_text, flags=re.DOTALL | re.IGNORECASE)
+        
+        # 清理多余空白
+        cleaned_text = cleaned_text.strip()
+        
+        return cleaned_text if cleaned_text else text
+
     def _display_current(self):
         """显示当前页的内容"""
         if self.current_page < 0 or self.current_page >= len(self.pages):
@@ -192,11 +245,15 @@ class CaptionHistory(QWidget):
         # 组合显示：问题在第一行，回答在后面
         parts = []
         if question:
-            # 问题用蓝色显示
-            parts.append(f'<span style="color: #90CAF9; font-weight: bold;">问题：{question}</span>')
+            # 问题用蓝色显示，连续换行合并为一次换行
+            question_html = re.sub(r'\n+', '<br/>', question)
+            parts.append(f'<span style="color: #90CAF9; font-weight: bold;">问题：{question_html}</span>')
         if answer:
-            # 回答用绿色显示
-            parts.append(f'<span style="color: #81C784;">回答：{answer}</span>')
+            # 回答用绿色显示，连续换行合并为一次换行
+            # 如果包含 <think> 标签，只显示后面的部分
+            display_answer = self._extract_display_content(answer)
+            answer_html = re.sub(r'\n+', '<br/>', display_answer)
+            parts.append(f'<span style="color: #81C784;">回答：{answer_html}</span>')
 
         html = "<br/><br/>".join(parts)
         self.content_label.setText(html)
@@ -646,12 +703,9 @@ class OverlayWindow(QWidget):
     def _on_hotkey_listening_toggled(self):
         """快捷键: 切换监听"""
         print("[OverlayWindow] Ctrl+F8 被按下，切换监听", flush=True)
-        QTimer.singleShot(0, self._emit_listening_toggled)
-
-    def _emit_listening_toggled(self):
-        """发射 listeningToggled 信号（在主线程执行）"""
-        print("[OverlayWindow] _emit_listening_toggled 被调用", flush=True)
+        # 直接发射信号（Signal 是线程安全的）
         self.listeningToggled.emit()
+        print("[OverlayWindow] listeningToggled 信号已发射", flush=True)
 
     def _on_hotkey_next_caption(self):
         """快捷键: 下一条字幕"""
