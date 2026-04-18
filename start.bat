@@ -43,6 +43,10 @@ if errorlevel 1 (
 
 echo [4/4] 启动程序...
 echo.
-python app.py
-
-pause
+REM 检查是否有日志文件，有则使用 pythonw 隐藏控制台，否则使用 python 显示控制台
+if exist logs\system.log (
+    start pythonw app.py
+) else (
+    python app.py
+    pause
+)

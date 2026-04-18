@@ -607,18 +607,11 @@ class MainWindow(QMainWindow):
         self.save_btn.clicked.connect(self._save_config)
         button_layout.addWidget(self.save_btn)
         
-        self.advanced_btn = QPushButton("⚙ 高级设置")
-        self.advanced_btn.setMinimumHeight(45)
-        self.advanced_btn.setStyleSheet(SECONDARY_BUTTON)
-        self.advanced_btn.setToolTip("打开高级配置对话框")
-        self.advanced_btn.clicked.connect(self._open_advanced_settings)
-        button_layout.addWidget(self.advanced_btn)
-        
         self.view_log_btn = QPushButton("📋 查看日志")
         self.view_log_btn.setMinimumHeight(45)
         self.view_log_btn.setStyleSheet(SECONDARY_BUTTON)
-        self.view_log_btn.setToolTip("查看转录日志")
-        self.view_log_btn.clicked.connect(self._open_transcription_log)
+        self.view_log_btn.setToolTip("查看转录日志（打开日志 Tab）")
+        self.view_log_btn.clicked.connect(self._open_log_tab)
         button_layout.addWidget(self.view_log_btn)
         
         layout.addLayout(button_layout)
@@ -939,74 +932,109 @@ class MainWindow(QMainWindow):
         return scroll_area
     
     def _create_display_tab(self) -> QWidget:
-        """创建显示设置 Tab - Overlay 高度/宽度比例、字体大小、热键配置"""
+        """创建显示设置 Tab - Overlay 高度/宽度比例、字体大小、热键配置（可编辑）"""
+        
+        # 使用 QScrollArea 包装内容
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setStyleSheet(f"QScrollArea {{ border: none; background-color: {BACKGROUND}; }}")
         
         tab = QWidget()
         layout = QVBoxLayout(tab)
         layout.setSpacing(12)
         layout.setContentsMargins(16, 16, 16, 16)
         
-        # Overlay 设置
-        overlay_group = QGroupBox("字幕窗口设置")
-        overlay_layout = QVBoxLayout(overlay_group)
+        # Overlay 设置（可编辑）
+        overlay_group = QGroupBox("字幕窗口")
+        overlay_group.setStyleSheet(f"""
+            QGroupBox {{
+                color: {TEXT_PRIMARY};
+                font-weight: 500;
+                border: 1px solid {BORDER_SUBTLE};
+                border-radius: 8px;
+                margin-top: 12px;
+                padding-top: 8px;
+            }}
+            QGroupBox::title {{
+                color: {TEXT_SECONDARY};
+                padding: 0 8px;
+            }}
+        """)
+        overlay_form = QFormLayout(overlay_group)
         
-        overlay_form = QFormLayout()
+        self.overlay_height_spin = QSpinBox()
+        self.overlay_height_spin.setRange(100, 800)
+        self.overlay_height_spin.setToolTip("字幕窗口高度")
+        overlay_form.addRow("窗口高度:", self.overlay_height_spin)
         
-        # 高度比例（从配置读取）
-        height_ratio = self.config.get("overlay.height_ratio", 0.15)
-        self.height_ratio_label = QLabel(f"{height_ratio:.2f}")
-        overlay_form.addRow("高度比例:", self.height_ratio_label)
+        self.overlay_width_spin = QDoubleSpinBox()
+        self.overlay_width_spin.setRange(0.5, 1.0)
+        self.overlay_width_spin.setSingleStep(0.05)
+        self.overlay_width_spin.setDecimals(2)
+        self.overlay_width_spin.setToolTip("相对屏幕宽度比例")
+        overlay_form.addRow("宽度比例:", self.overlay_width_spin)
         
-        # 宽度比例（从配置读取）
-        width_ratio = self.config.get("overlay.width_ratio", 0.8)
-        self.width_ratio_label = QLabel(f"{width_ratio:.2f}")
-        overlay_form.addRow("宽度比例:", self.width_ratio_label)
+        self.overlay_radius_spin = QSpinBox()
+        self.overlay_radius_spin.setRange(0, 24)
+        self.overlay_radius_spin.setToolTip("窗口圆角半径")
+        overlay_form.addRow("圆角半径:", self.overlay_radius_spin)
         
-        # 字体大小（从配置读取）
-        font_size = self.config.get("overlay.font_size", 18)
-        self.font_size_label = QLabel(f"{font_size} px")
-        overlay_form.addRow("字体大小:", self.font_size_label)
+        self.font_size_spin = QSpinBox()
+        self.font_size_spin.setRange(8, 40)
+        self.font_size_spin.setToolTip("字幕字体大小")
+        overlay_form.addRow("字体大小:", self.font_size_spin)
         
-        overlay_layout.addLayout(overlay_form)
         layout.addWidget(overlay_group)
         
-        # 热键配置
-        hotkey_group = QGroupBox("快捷键配置")
-        hotkey_layout = QVBoxLayout(hotkey_group)
+        # 热键配置（可编辑）
+        hotkey_group = QGroupBox("快捷键")
+        hotkey_group.setStyleSheet(overlay_group.styleSheet())
+        hotkey_form = QFormLayout(hotkey_group)
         
-        hotkey_form = QFormLayout()
+        self.hotkey_visibility_input = QLineEdit()
+        self.hotkey_visibility_input.setToolTip("显示/隐藏字幕窗口")
+        hotkey_form.addRow("显示/隐藏:", self.hotkey_visibility_input)
         
-        # 显示/隐藏字幕窗口
-        overlay_key = self.config.get("hotkeys.overlay_visibility", "Ctrl+F4")
-        hotkey_form.addRow("显示/隐藏字幕:", QLabel(overlay_key))
+        self.hotkey_mode_input = QLineEdit()
+        self.hotkey_mode_input.setToolTip("切换自动/手动模式")
+        hotkey_form.addRow("切换模式:", self.hotkey_mode_input)
         
-        # 切换自动/手动模式
-        mode_key = self.config.get("hotkeys.transcription_mode", "Ctrl+F6")
-        hotkey_form.addRow("切换转录模式:", QLabel(mode_key))
+        self.hotkey_listen_input = QLineEdit()
+        self.hotkey_listen_input.setToolTip("开始/结束监听")
+        hotkey_form.addRow("监听控制:", self.hotkey_listen_input)
         
-        # 开始/结束监听
-        listen_key = self.config.get("hotkeys.listening_toggled", "Ctrl+F8")
-        hotkey_form.addRow("开始/结束监听:", QLabel(listen_key))
+        self.hotkey_prev_input = QLineEdit()
+        self.hotkey_prev_input.setToolTip("上一条字幕")
+        hotkey_form.addRow("上一条:", self.hotkey_prev_input)
         
-        # 上一条字幕
-        prev_key = self.config.get("hotkeys.prev_caption", "Ctrl+F7")
-        hotkey_form.addRow("上一条字幕:", QLabel(prev_key))
+        self.hotkey_next_input = QLineEdit()
+        self.hotkey_next_input.setToolTip("下一条字幕")
+        hotkey_form.addRow("下一条:", self.hotkey_next_input)
         
-        # 下一条字幕
-        next_key = self.config.get("hotkeys.next_caption", "Ctrl+F9")
-        hotkey_form.addRow("下一条字幕:", QLabel(next_key))
-        
-        hotkey_layout.addLayout(hotkey_form)
         layout.addWidget(hotkey_group)
         
-        # 提示信息
-        hint_label = QLabel("提示：以上设置可在 config.yaml 或高级设置中修改")
-        hint_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px;")
-        layout.addWidget(hint_label)
+        # 保存按钮
+        save_btn = QPushButton("💾 保存配置")
+        save_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #0078D4;
+                color: #FFFFFF;
+                border: none;
+                border-radius: 6px;
+                padding: 8px 20px;
+                font-size: 14px;
+            }
+            QPushButton:hover {
+                background-color: #1084D8;
+            }
+        """)
+        save_btn.clicked.connect(self._save_config)
+        layout.addWidget(save_btn)
         
         layout.addStretch()
         
-        return tab
+        scroll_area.setWidget(tab)
+        return scroll_area
     
     def _create_log_tab(self) -> QWidget:
         """创建日志 Tab - 显示转录日志和系统日志"""
@@ -1074,6 +1102,8 @@ class MainWindow(QMainWindow):
         self.system_log_text.setReadOnly(True)
         self.system_log_text.setStyleSheet(self.transcription_log_text.styleSheet())
         self.system_log_text.setPlaceholderText("暂无系统日志...")
+        # 禁用自动滚动到顶部，防止拖拽时弹回
+        self.system_log_text.setTextInteractionFlags(Qt.TextSelectableByMouse | Qt.TextSelectableByKeyboard)
         system_layout.addWidget(self.system_log_text)
         
         # 系统日志按钮
@@ -1293,6 +1323,70 @@ class MainWindow(QMainWindow):
 
         compute_map = {"float32": 0, "float16": 1, "int8": 2}
         self.compute_type_combo.setCurrentIndex(compute_map.get(self.config.get("stt.local.compute_type", "float32"), 0))
+        
+        # 同步高级设置控件（LLM）
+        if hasattr(self, 'temp_spin'):
+            self.temp_spin.setValue(self.config.get("llm.generation.temperature", 0.3))
+        if hasattr(self, 'max_tokens_spin'):
+            self.max_tokens_spin.setValue(self.config.get("llm.generation.max_completion_tokens", 500))
+        if hasattr(self, 'max_tokens_stream_spin'):
+            self.max_tokens_stream_spin.setValue(self.config.get("llm.generation.max_completion_tokens_stream", 1000))
+        if hasattr(self, 'reasoning_combo'):
+            self.reasoning_combo.setCurrentText(self.config.get("llm.generation.reasoning_effort", "none"))
+        if hasattr(self, 'prompt_base_input'):
+            self.prompt_base_input.setText(self.config.get("llm.prompts.base", ""))
+        if hasattr(self, 'prompt_words_input'):
+            self.prompt_words_input.setText(self.config.get("llm.prompts.words", ""))
+        if hasattr(self, 'prompt_theme_input'):
+            self.prompt_theme_input.setText(self.config.get("llm.prompts.theme", ""))
+        
+        # 同步高级设置控件（STT）
+        if hasattr(self, 'volume_threshold_spin'):
+            self.volume_threshold_spin.setValue(self.config.get("stt.auto.volume_threshold", 0.015))
+        if hasattr(self, 'voice_ratio_spin'):
+            self.voice_ratio_spin.setValue(self.config.get("stt.auto.voice_ratio", 3.0))
+        if hasattr(self, 'silence_ratio_spin'):
+            self.silence_ratio_spin.setValue(self.config.get("stt.auto.silence_ratio", 1.8))
+        if hasattr(self, 'noise_alpha_spin'):
+            self.noise_alpha_spin.setValue(self.config.get("stt.auto.noise_alpha", 0.08))
+        if hasattr(self, 'pause_seconds_spin'):
+            self.pause_seconds_spin.setValue(self.config.get("stt.auto.pause_seconds", 0.8))
+        if hasattr(self, 'min_sentence_spin'):
+            self.min_sentence_spin.setValue(self.config.get("stt.auto.min_sentence_seconds", 2.0))
+        if hasattr(self, 'max_sentence_spin'):
+            self.max_sentence_spin.setValue(self.config.get("stt.auto.max_sentence_seconds", 8.0))
+        if hasattr(self, 'resume_chunks_spin'):
+            self.resume_chunks_spin.setValue(self.config.get("stt.auto.resume_voice_chunks", 2))
+        if hasattr(self, 'download_mirror_input'):
+            self.download_mirror_input.setText(self.config.get("stt.download.mirror", ""))
+        if hasattr(self, 'cache_dir_input'):
+            self.cache_dir_input.setText(self.config.get("stt.download.cache_dir", ""))
+        if hasattr(self, 'stt_language_combo'):
+            self.stt_language_combo.setCurrentText(self.config.get("stt.local.language", "zh"))
+        if hasattr(self, 'stt_hotwords_input'):
+            self.stt_hotwords_input.setText(self.config.get("stt.hotwords", ""))
+        if hasattr(self, 'stt_model_path_input'):
+            self.stt_model_path_input.setText(self.config.get("stt.local.model_path", ""))
+        
+        # 同步高级设置控件（显示/热键）
+        if hasattr(self, 'overlay_height_spin'):
+            self.overlay_height_spin.setValue(self.config.get("ui.overlay_height", 500))
+        if hasattr(self, 'overlay_width_spin'):
+            self.overlay_width_spin.setValue(self.config.get("ui.overlay_width_ratio", 0.85))
+        if hasattr(self, 'overlay_radius_spin'):
+            self.overlay_radius_spin.setValue(self.config.get("ui.overlay_border_radius", 12))
+        if hasattr(self, 'font_size_spin'):
+            self.font_size_spin.setValue(self.config.get("ui.font_size", 12))
+        if hasattr(self, 'hotkey_visibility_input'):
+            self.hotkey_visibility_input.setText(self.config.get("ui.keyboard_hotkey.overlay_visibility", "Ctrl+F4"))
+        if hasattr(self, 'hotkey_mode_input'):
+            self.hotkey_mode_input.setText(self.config.get("ui.keyboard_hotkey.transcription_mode", "Ctrl+F6"))
+        if hasattr(self, 'hotkey_listen_input'):
+            self.hotkey_listen_input.setText(self.config.get("ui.keyboard_hotkey.listening_toggled", "Ctrl+F8"))
+        if hasattr(self, 'hotkey_prev_input'):
+            self.hotkey_prev_input.setText(self.config.get("ui.keyboard_hotkey.prev_caption", "Ctrl+F7"))
+        if hasattr(self, 'hotkey_next_input'):
+            self.hotkey_next_input.setText(self.config.get("ui.keyboard_hotkey.next_caption", "Ctrl+F9"))
 
 # 同步音频设备类型选择（阻止信号避免初始化时错误触发）
         use_microphone = self.config.get("audio.use_microphone", False)
@@ -1799,6 +1893,70 @@ class MainWindow(QMainWindow):
         else:
             # OpenAI/Ollama: 从输入框获取模型名称
             self.config.update_provider_config(mode, "model", self.model_name_input.text())
+        
+        # 保存高级设置（LLM）
+        if hasattr(self, 'temp_spin'):
+            self.config.set("llm.generation.temperature", self.temp_spin.value())
+        if hasattr(self, 'max_tokens_spin'):
+            self.config.set("llm.generation.max_completion_tokens", self.max_tokens_spin.value())
+        if hasattr(self, 'max_tokens_stream_spin'):
+            self.config.set("llm.generation.max_completion_tokens_stream", self.max_tokens_stream_spin.value())
+        if hasattr(self, 'reasoning_combo'):
+            self.config.set("llm.generation.reasoning_effort", self.reasoning_combo.currentText())
+        if hasattr(self, 'prompt_base_input'):
+            self.config.set("llm.prompts.base", self.prompt_base_input.text())
+        if hasattr(self, 'prompt_words_input'):
+            self.config.set("llm.prompts.words", self.prompt_words_input.text())
+        if hasattr(self, 'prompt_theme_input'):
+            self.config.set("llm.prompts.theme", self.prompt_theme_input.text())
+        
+        # 保存高级设置（STT）
+        if hasattr(self, 'volume_threshold_spin'):
+            self.config.set("stt.auto.volume_threshold", self.volume_threshold_spin.value())
+        if hasattr(self, 'voice_ratio_spin'):
+            self.config.set("stt.auto.voice_ratio", self.voice_ratio_spin.value())
+        if hasattr(self, 'silence_ratio_spin'):
+            self.config.set("stt.auto.silence_ratio", self.silence_ratio_spin.value())
+        if hasattr(self, 'noise_alpha_spin'):
+            self.config.set("stt.auto.noise_alpha", self.noise_alpha_spin.value())
+        if hasattr(self, 'pause_seconds_spin'):
+            self.config.set("stt.auto.pause_seconds", self.pause_seconds_spin.value())
+        if hasattr(self, 'min_sentence_spin'):
+            self.config.set("stt.auto.min_sentence_seconds", self.min_sentence_spin.value())
+        if hasattr(self, 'max_sentence_spin'):
+            self.config.set("stt.auto.max_sentence_seconds", self.max_sentence_spin.value())
+        if hasattr(self, 'resume_chunks_spin'):
+            self.config.set("stt.auto.resume_voice_chunks", self.resume_chunks_spin.value())
+        if hasattr(self, 'download_mirror_input'):
+            self.config.set("stt.download.mirror", self.download_mirror_input.text())
+        if hasattr(self, 'cache_dir_input'):
+            self.config.set("stt.download.cache_dir", self.cache_dir_input.text())
+        if hasattr(self, 'stt_language_combo'):
+            self.config.set("stt.local.language", self.stt_language_combo.currentText())
+        if hasattr(self, 'stt_hotwords_input'):
+            self.config.set("stt.hotwords", self.stt_hotwords_input.text())
+        if hasattr(self, 'stt_model_path_input'):
+            self.config.set("stt.local.model_path", self.stt_model_path_input.text())
+        
+        # 保存高级设置（显示/热键）
+        if hasattr(self, 'overlay_height_spin'):
+            self.config.set("ui.overlay_height", self.overlay_height_spin.value())
+        if hasattr(self, 'overlay_width_spin'):
+            self.config.set("ui.overlay_width_ratio", self.overlay_width_spin.value())
+        if hasattr(self, 'overlay_radius_spin'):
+            self.config.set("ui.overlay_border_radius", self.overlay_radius_spin.value())
+        if hasattr(self, 'font_size_spin'):
+            self.config.set("ui.font_size", self.font_size_spin.value())
+        if hasattr(self, 'hotkey_visibility_input'):
+            self.config.set("ui.keyboard_hotkey.overlay_visibility", self.hotkey_visibility_input.text())
+        if hasattr(self, 'hotkey_mode_input'):
+            self.config.set("ui.keyboard_hotkey.transcription_mode", self.hotkey_mode_input.text())
+        if hasattr(self, 'hotkey_listen_input'):
+            self.config.set("ui.keyboard_hotkey.listening_toggled", self.hotkey_listen_input.text())
+        if hasattr(self, 'hotkey_prev_input'):
+            self.config.set("ui.keyboard_hotkey.prev_caption", self.hotkey_prev_input.text())
+        if hasattr(self, 'hotkey_next_input'):
+            self.config.set("ui.keyboard_hotkey.next_caption", self.hotkey_next_input.text())
 
     def _update_ui_state(self):
         """更新 UI 状态"""
@@ -2280,6 +2438,15 @@ class MainWindow(QMainWindow):
     def _clear_transcription_log(self):
         """清空转录日志"""
         self.transcription_log_data.clear()
+        # 同时清空日志 Tab 中的显示
+        if hasattr(self, 'transcription_log_text') and self.transcription_log_text:
+            self.transcription_log_text.clear()
+    
+    def _open_log_tab(self):
+        """打开日志 Tab"""
+        if hasattr(self, 'tab_widget') and self.tab_widget:
+            # 切换到日志 Tab（第 5 个 Tab，索引为 4）
+            self.tab_widget.setCurrentIndex(4)
     
     def _open_transcription_log(self):
         """打开转录日志对话框"""
