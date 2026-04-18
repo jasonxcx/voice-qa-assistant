@@ -43,7 +43,7 @@ from core.logger import log_llm, log_system
 from core.resume_parser import parse_resume
 from ui.styles import (
     MAIN_WINDOW_STYLESHEET, STATUS_COLORS,
-    BACKGROUND, SURFACE, TEXT_PRIMARY, TEXT_SECONDARY, BORDER_SUBTLE, ACCENT_PRIMARY,
+    BACKGROUND, SURFACE, SURFACE_HOVER, TEXT_PRIMARY, TEXT_SECONDARY, BORDER_SUBTLE, ACCENT_PRIMARY,
     SECONDARY_BUTTON, DANGER_BUTTON, SUCCESS, ERROR
 )
 from ui.settings_dialog import AdvancedSettingsDialog
@@ -375,7 +375,7 @@ class MainWindow(QMainWindow):
         self.caption_toggle_btn.clicked.connect(self._toggle_caption_window)
         button_layout.addWidget(self.caption_toggle_btn)
         
-        self.log_btn = QPushButton("📂 日志")
+        self.log_btn = QPushButton("📂 日志文件")
         self.log_btn.setMinimumHeight(45)
         self.log_btn.setStyleSheet(self.caption_toggle_btn.styleSheet())
         self.log_btn.clicked.connect(self._open_log_folder)
@@ -394,14 +394,6 @@ class MainWindow(QMainWindow):
         self.advanced_btn.setToolTip("打开高级配置对话框")
         self.advanced_btn.clicked.connect(self._open_advanced_settings)
         button_layout.addWidget(self.advanced_btn)
-        
-        # 查看日志按钮
-        self.view_log_btn = QPushButton("📋 查看日志")
-        self.view_log_btn.setMinimumHeight(45)
-        self.view_log_btn.setStyleSheet(SECONDARY_BUTTON)
-        self.view_log_btn.setToolTip("查看转录日志")
-        self.view_log_btn.clicked.connect(self._open_transcription_log)
-        button_layout.addWidget(self.view_log_btn)
         
         layout.addLayout(button_layout)
 
@@ -510,6 +502,52 @@ class MainWindow(QMainWindow):
         
         layout.addWidget(resume_group)
         
+        # 模型配置
+        model_group = QGroupBox("模型配置")
+        model_layout = QFormLayout(model_group)
+        
+        # 模型名称（OpenAI/Ollama）
+        self.model_name_input = QLineEdit()
+        self.model_name_input.setPlaceholderText("如：qwen-plus, qwen2.5:7b")
+        self.model_name_input_label = QLabel("LLM 模型:")
+        model_layout.addRow(self.model_name_input_label, self.model_name_input)
+        
+        # LM Studio 模型选择（LM Studio 模式显示）
+        lmstudio_row = QHBoxLayout()
+        lmstudio_row.setSpacing(4)
+        
+        self.model_combo = QComboBox()
+        self.model_combo.setEditable(True)
+        self.model_combo.setToolTip("从 LM Studio 选择模型")
+        self.model_combo.setEnabled(False)
+        self.model_combo.currentIndexChanged.connect(self._on_model_combo_changed)
+        lmstudio_row.addWidget(self.model_combo, stretch=1)
+        
+        self.refresh_models_btn = QPushButton("🔄")
+        self.refresh_models_btn.setToolTip("从 LM Studio 获取可用模型")
+        self.refresh_models_btn.setFixedSize(28, 28)
+        self.refresh_models_btn.clicked.connect(self._refresh_lmstudio_models)
+        self.refresh_models_btn.setEnabled(False)
+        lmstudio_row.addWidget(self.refresh_models_btn)
+        
+        self.model_combo_label = QLabel("选择模型:")
+        model_layout.addRow(self.model_combo_label, lmstudio_row)
+        
+        # STT 模型选择
+        self.stt_model_combo = QComboBox()
+        self.stt_model_combo.addItems([
+            "tiny (75MB, 最快)",
+            "base (143MB, 快)",
+            "small (467MB, 平衡)",
+            "medium (1.5GB, 推荐)",
+            "large-v2 (2.9GB, 最准确)",
+            "large-v3 (3GB, 最新)"
+        ])
+        self.stt_model_combo.setCurrentIndex(3)
+        model_layout.addRow("STT 模型:", self.stt_model_combo)
+        
+        layout.addWidget(model_group)
+        
         # 音频设置（简化版）
         audio_group = QGroupBox("音频设置")
         audio_layout = QVBoxLayout(audio_group)
@@ -595,7 +633,7 @@ class MainWindow(QMainWindow):
         self.caption_toggle_btn.clicked.connect(self._toggle_caption_window)
         button_layout.addWidget(self.caption_toggle_btn)
         
-        self.log_btn = QPushButton("📂 日志")
+        self.log_btn = QPushButton("📂 日志文件")
         self.log_btn.setMinimumHeight(45)
         self.log_btn.setStyleSheet(self.caption_toggle_btn.styleSheet())
         self.log_btn.clicked.connect(self._open_log_folder)
@@ -607,20 +645,13 @@ class MainWindow(QMainWindow):
         self.save_btn.clicked.connect(self._save_config)
         button_layout.addWidget(self.save_btn)
         
-        self.view_log_btn = QPushButton("📋 查看日志")
-        self.view_log_btn.setMinimumHeight(45)
-        self.view_log_btn.setStyleSheet(SECONDARY_BUTTON)
-        self.view_log_btn.setToolTip("查看转录日志（打开日志 Tab）")
-        self.view_log_btn.clicked.connect(self._open_log_tab)
-        button_layout.addWidget(self.view_log_btn)
-        
         layout.addLayout(button_layout)
         layout.addStretch()
         
         return tab
     
     def _create_llm_tab(self) -> QWidget:
-        """创建 LLM 设置 Tab - 包含基础设置和高级设置"""
+        """创建 LLM 设置 Tab - LLM 模式、apiKey、模型名称、连接和高级设置"""
         
         # 使用 QScrollArea 包装内容
         scroll_area = QScrollArea()
@@ -633,7 +664,7 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(16, 16, 16, 16)
         
         # 基础设置
-        llm_group = QGroupBox("大模型设置")
+        llm_group = QGroupBox("LLM 设置")
         llm_group.setStyleSheet(f"""
             QGroupBox {{
                 color: {TEXT_PRIMARY};
@@ -652,42 +683,48 @@ class MainWindow(QMainWindow):
         
         llm_form = QFormLayout()
         
-        # Provider 选择
+        # LLM 模式选择
         self.llm_combo = QComboBox()
         self.llm_combo.addItems(["OpenAI (云端)", "Ollama（本地）", "LM Studio (本地)"])
         self.llm_combo.currentIndexChanged.connect(self._on_llm_changed)
-        llm_form.addRow("模型模式:", self.llm_combo)
+        llm_form.addRow("LLM 模式:", self.llm_combo)
         
-        # 模型名称输入框
-        self.model_name_input = QLineEdit()
-        self.model_name_input.setPlaceholderText("如：qwen3.5-plus, qwen2.5:7b")
-        self.model_name_input_label = QLabel("模型名称:")
-        llm_form.addRow(self.model_name_input_label, self.model_name_input)
+        # apiKey 输入框（密码样式 + 小眼睛）
+        api_key_layout = QHBoxLayout()
+        api_key_layout.setSpacing(4)
+        
+        self.api_key_input = QLineEdit()
+        self.api_key_input.setPlaceholderText("sk-xxx")
+        self.api_key_input.setEchoMode(QLineEdit.Password)
+        self.api_key_input.setToolTip("API Key（不会显示在日志中）")
+        api_key_layout.addWidget(self.api_key_input, stretch=1)
+        
+        # 小眼睛按钮
+        self.toggle_api_key_btn = QPushButton("👁")
+        self.toggle_api_key_btn.setFixedSize(28, 28)
+        self.toggle_api_key_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {SURFACE};
+                border: 1px solid {BORDER_SUBTLE};
+                border-radius: 4px;
+                font-size: 14px;
+            }}
+            QPushButton:hover {{
+                background-color: {SURFACE_HOVER};
+                border-color: {ACCENT_PRIMARY};
+            }}
+        """)
+        self.toggle_api_key_btn.setToolTip("显示/隐藏 API Key")
+        self.toggle_api_key_btn.clicked.connect(self._toggle_api_key_visibility)
+        api_key_layout.addWidget(self.toggle_api_key_btn)
+        
+        llm_form.addRow("API Key:", api_key_layout)
         
         # Base URL 输入框
         self.llm_url = QLineEdit()
-        self.llm_url.setPlaceholderText("http://127.0.0.1")
+        self.llm_url.setPlaceholderText("http://127.0.0.1 或 https://api.dashscope.com")
+        self.llm_url.setToolTip("API 服务地址")
         llm_form.addRow("Base URL:", self.llm_url)
-        
-        # LM Studio 模型刷新按钮和下拉框
-        self.refresh_models_btn = QPushButton("🔄 刷新模型列表")
-        self.refresh_models_btn.setToolTip("从 LM Studio 获取可用模型")
-        self.refresh_models_btn.setFixedHeight(28)
-        self.refresh_models_btn.clicked.connect(self._refresh_lmstudio_models)
-        self.refresh_models_btn.setEnabled(False)
-        
-        self.model_combo = QComboBox()
-        self.model_combo.setEditable(True)
-        self.model_combo.setToolTip("从 LM Studio 选择模型（鼠标悬停查看参数）")
-        self.model_combo.setEnabled(False)
-        self.model_combo.currentIndexChanged.connect(self._on_model_combo_changed)
-        
-        self.model_combo_layout = QHBoxLayout()
-        self.model_combo_layout.setSpacing(4)
-        self.model_combo_layout.addWidget(self.model_combo)
-        self.model_combo_layout.addWidget(self.refresh_models_btn)
-        self.model_combo_label = QLabel("选择模型:")
-        llm_form.addRow(self.model_combo_label, self.model_combo_layout)
         
         llm_layout.addLayout(llm_form)
         layout.addWidget(llm_group)
@@ -764,7 +801,7 @@ class MainWindow(QMainWindow):
         return scroll_area
     
     def _create_stt_tab(self) -> QWidget:
-        """创建 STT 设置 Tab - 包含基础设置和高级设置"""
+        """创建 STT 设置 Tab - 只包含高级设置（基础配置在主面板）"""
         
         # 使用 QScrollArea 包装内容
         scroll_area = QScrollArea()
@@ -776,9 +813,9 @@ class MainWindow(QMainWindow):
         layout.setSpacing(12)
         layout.setContentsMargins(16, 16, 16, 16)
         
-        # 基础设置
-        stt_group = QGroupBox("语音识别 (STT) 设置")
-        stt_group.setStyleSheet(f"""
+        # 计算设置（设备、计算类型）
+        compute_group = QGroupBox("计算设置")
+        compute_group.setStyleSheet(f"""
             QGroupBox {{
                 color: {TEXT_PRIMARY};
                 font-weight: 500;
@@ -792,41 +829,25 @@ class MainWindow(QMainWindow):
                 padding: 0 8px;
             }}
         """)
-        stt_layout = QVBoxLayout(stt_group)
-        
-        stt_form = QFormLayout()
-        
-        # STT 模型选择
-        self.stt_model_combo = QComboBox()
-        self.stt_model_combo.addItems([
-            "tiny (75MB, 最快)",
-            "base (143MB, 快)",
-            "small (467MB, 平衡)",
-            "medium (1.5GB, 推荐)",
-            "large-v2 (2.9GB, 最准确)",
-            "large-v3 (3GB, 最新)"
-        ])
-        self.stt_model_combo.setCurrentIndex(3)
-        stt_form.addRow("模型:", self.stt_model_combo)
+        compute_form = QFormLayout(compute_group)
         
         # 计算设备选择
         self.stt_device_combo = QComboBox()
         self.stt_device_combo.addItems(["CPU", "CUDA (GPU)"])
         self.stt_device_combo.setCurrentIndex(1)
-        stt_form.addRow("计算设备:", self.stt_device_combo)
+        compute_form.addRow("计算设备:", self.stt_device_combo)
         
         # 计算类型选择
         self.compute_type_combo = QComboBox()
         self.compute_type_combo.addItems(["float32 (兼容)", "float16 (快速)", "int8 (省显存)"])
         self.compute_type_combo.setCurrentIndex(0)
-        stt_form.addRow("计算类型:", self.compute_type_combo)
+        compute_form.addRow("计算类型:", self.compute_type_combo)
         
-        stt_layout.addLayout(stt_form)
-        layout.addWidget(stt_group)
+        layout.addWidget(compute_group)
         
         # 自动分句参数（高级设置）
         auto_group = QGroupBox("自动分句参数（仅自动模式生效）")
-        auto_group.setStyleSheet(stt_group.styleSheet())
+        auto_group.setStyleSheet(compute_group.styleSheet())
         auto_form = QFormLayout(auto_group)
         
         self.volume_threshold_spin = QDoubleSpinBox()
@@ -882,7 +903,7 @@ class MainWindow(QMainWindow):
         
         # 下载与语言（高级设置）
         download_group = QGroupBox("下载与语言")
-        download_group.setStyleSheet(stt_group.styleSheet())
+        download_group.setStyleSheet(compute_group.styleSheet())
         download_form = QFormLayout(download_group)
         
         self.download_mirror_input = QLineEdit()
@@ -1297,23 +1318,33 @@ class MainWindow(QMainWindow):
 
         self.llm_url.setText(self.config.llm_base_url)
         self.model_name_input.setText(self.config.llm_model)
-
-        # 根据当前模式设置 UI 可见性
-        is_lmstudio = (self.config.llm_mode == "lmstudio")
+        
+        # 同步 apiKey
+        mode = self.config.llm_mode
+        provider_api_key = self.config.get(f"llm.provider.{mode}.api_key", "")
+        self.api_key_input.setText(provider_api_key)
+        
+        # 根据当前模式设置 UI 可见性（LLM Tab）
+        is_lmstudio = (mode == "lmstudio")
+        is_local = is_lmstudio  # Ollama 和 LM Studio 都是本地模式
         print(f"[Debug] is_lmstudio={is_lmstudio}", flush=True)
 
-        # OpenAI/Ollama 模式：只显示模型名称输入框
-        # LM Studio 模式：只显示模型选择下拉框和刷新按钮
+        # OpenAI/Ollama 模式：显示模型名称输入框和 apiKey
+        # LM Studio 模式：显示模型选择下拉框和刷新按钮
         self.model_name_input_label.setVisible(not is_lmstudio)
         self.model_name_input.setVisible(not is_lmstudio)
         self.model_combo_label.setVisible(is_lmstudio)
         self.model_combo.setVisible(is_lmstudio)
         self.refresh_models_btn.setVisible(is_lmstudio)
-        self.model_combo.setEnabled(is_lmstudio)
-        self.refresh_models_btn.setEnabled(is_lmstudio)
         
-        # 初始化时自动刷新 LM Studio 模型列表
+        # apiKey 输入框：本地模式（Ollama/LM Studio）不需要
+        self.api_key_input.setVisible(not is_local)
+        self.toggle_api_key_btn.setVisible(not is_local)
+        
         if is_lmstudio:
+            self.model_combo.setEnabled(True)
+            self.refresh_models_btn.setEnabled(True)
+            # 初始化时自动刷新 LM Studio 模型列表
             print("[Debug] _sync_ui_with_config: 自动刷新 LM Studio 模型列表", flush=True)
             self._refresh_lmstudio_models()
 
@@ -1566,12 +1597,18 @@ class MainWindow(QMainWindow):
         # 启用/禁用 LM Studio 模型刷新按钮和下拉框
         is_lmstudio = (index == 2)
 
-        # OpenAI/Ollama 模式：显示模型名称输入框，隐藏模型选择下拉框
+        # OpenAI/Ollama 模式：显示模型名称输入框和 apiKey，隐藏 LM Studio 选择下拉框
+        # LM Studio 模式：隐藏 apiKey，显示 LM Studio 选择下拉框
+        is_local = is_lmstudio  # Ollama 和 LM Studio 都是本地模式
         self.model_name_input_label.setVisible(not is_lmstudio)
         self.model_name_input.setVisible(not is_lmstudio)
         self.model_combo_label.setVisible(is_lmstudio)
         self.model_combo.setVisible(is_lmstudio)
         self.refresh_models_btn.setVisible(is_lmstudio)
+        
+        # apiKey 输入框：本地模式（Ollama/LM Studio）不需要 apiKey
+        self.api_key_input.setVisible(not is_local)
+        self.toggle_api_key_btn.setVisible(not is_local)
 
         # 启用/禁用
         self.model_combo.setEnabled(is_lmstudio)
@@ -1587,6 +1624,15 @@ class MainWindow(QMainWindow):
             self._update_ui_state()
         except Exception as e:
             QMessageBox.critical(self, "切换失败", str(e))
+    
+    def _toggle_api_key_visibility(self):
+        """切换 API Key 显示/隐藏"""
+        if self.api_key_input.echoMode() == QLineEdit.Password:
+            self.api_key_input.setEchoMode(QLineEdit.Normal)
+            self.toggle_api_key_btn.setText("🔒")
+        else:
+            self.api_key_input.setEchoMode(QLineEdit.Password)
+            self.toggle_api_key_btn.setText("👁")
     
     def _toggle_listening(self):
         """切换监听状态"""
@@ -1884,6 +1930,12 @@ class MainWindow(QMainWindow):
         # 同时更新 provider 永久配置
         mode = self.config.llm_mode
         self.config.update_provider_config(mode, "base_url", self.llm_url.text())
+        
+        # 保存 apiKey（非本地模式才保存）
+        if mode in ("openai", "ollama"):
+            api_key_text = self.api_key_input.text()
+            if api_key_text:
+                self.config.update_provider_config(mode, "api_key", api_key_text)
 
         # LM Studio 模式下从下拉框获取模型
         if mode == "lmstudio":
@@ -2144,6 +2196,7 @@ class MainWindow(QMainWindow):
         """模型加载完成 - 更新为监听中状态"""
         self.is_model_loading = False
         log_system("模型加载完成", logging.INFO)
+        
         if hasattr(self, "_stt_download_dialog") and self._stt_download_dialog:
             self._stt_download_dialog.hide()
         self._update_ui_state()  # 恢复正常状态
@@ -2372,11 +2425,6 @@ class MainWindow(QMainWindow):
     @Slot(str)
     def _on_generation_complete(self, answer: str):
         """生成完成 - 更新状态并清理思考内容"""
-        # 调试：打印原始答案
-        print(f"[COMPLETE_DEBUG] raw answer length: {len(answer)}", flush=True)
-        if len(answer) > 100:
-            print(f"[COMPLETE_DEBUG] first 100 chars: '{answer[:100]}'", flush=True)
-        
         # 最终清理：确保所有思考内容都被移除
         # 移除 ALSE...ALSE 标签及其内容
         clean_answer = re.sub(r'ALSE.*?ALSE', '', answer, flags=re.DOTALL)
@@ -2390,8 +2438,8 @@ class MainWindow(QMainWindow):
         clean_answer = re.sub(r'ALSE.*', '', clean_answer)
         
         # 格式3: <|thought|>...<|/thought|>
-        clean_answer = re.sub(r'<\|thought\|>.*?<\|/thought\|>', '', clean_answer, flags=re.DOTALL)
-        clean_answer = re.sub(r'<\|thought\|>.*', '', clean_answer)
+        clean_answer = re.sub(r'<\|think\|>.*?<\|/think\|>', '', clean_answer, flags=re.DOTALL)
+        clean_answer = re.sub(r'<\|think\|>.*', '', clean_answer)
         
         # 格式4: <|reasoning|>...<|/reasoning|>
         clean_answer = re.sub(r'<\|reasoning\|>.*?<\|/reasoning\|>', '', clean_answer, flags=re.DOTALL)
