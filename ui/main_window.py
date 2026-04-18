@@ -940,7 +940,7 @@ class MainWindow(QMainWindow):
 
             # 设置有 loaded_instances 的模型颜色
             if loaded_instances:
-                from PyQt5.QtGui import QColor, QBrush
+                from PySide6.QtGui import QColor, QBrush
                 self.model_combo.setItemData(index, QBrush(QColor("#4CAF50")), Qt.ForegroundRole)
                 self.model_combo.setItemData(index, "有加载实例的模型", Qt.ToolTipRole)
 
@@ -982,7 +982,7 @@ class MainWindow(QMainWindow):
         print(f"[Debug] _update_model_combo 完成2", flush=True)
         self.refresh_models_btn.setEnabled(True)
 
-        from PyQt5.QtCore import QTimer
+        from PySide6.QtCore import QTimer
         QTimer.singleShot(3000, lambda: self.refresh_models_btn.setText("🔄 刷新模型列表"))
 
     def _update_model_combo_simple(self, models: List[Dict]):
@@ -999,7 +999,7 @@ class MainWindow(QMainWindow):
             self.model_combo.addItem("未找到模型（请确保 LM Studio 已启动并加载模型）", "")
             self.refresh_models_btn.setText("🔄 重试")
         self.refresh_models_btn.setEnabled(True)
-        from PyQt5.QtCore import QTimer
+        from PySide6.QtCore import QTimer
         QTimer.singleShot(3000, lambda: self.refresh_models_btn.setText("🔄 刷新模型列表"))
 
 
