@@ -1,0 +1,1 @@
+Start-Process -FilePath "pythonw" -ArgumentList "E:\workspace\Project\interviewHelper\app.py" -WindowStyle Hidden
