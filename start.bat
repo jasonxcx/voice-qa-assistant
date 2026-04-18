@@ -43,5 +43,5 @@ if errorlevel 1 (
 
 echo [4/4] 启动程序...
 echo.
-REM 使用 pythonw 隐藏控制台窗口启动（无控制台输出）
-start pythonw app.py
+REM 使用 pythonw 隐藏控制台窗口启动
+pythonw app.py
