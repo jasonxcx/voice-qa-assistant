@@ -18,6 +18,7 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QButtonGroup,
     QComboBox,
+    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QGroupBox,
@@ -30,6 +31,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QRadioButton,
     QScrollArea,
+    QSpinBox,
     QTabWidget,
     QTextEdit,
     QToolButton,
@@ -434,6 +436,7 @@ class MainWindow(QMainWindow):
         self.tab_widget.addTab(self._create_llm_tab(), "LLM 设置")
         self.tab_widget.addTab(self._create_stt_tab(), "STT 设置")
         self.tab_widget.addTab(self._create_display_tab(), "显示设置")
+        self.tab_widget.addTab(self._create_log_tab(), "日志")
         
         # 字幕状态（始终显示在底部）
         self.caption_status = QLabel("字幕窗口：未显示（点击后显示/隐藏，拖动顶部灰色条移动窗口）")
@@ -624,14 +627,34 @@ class MainWindow(QMainWindow):
         return tab
     
     def _create_llm_tab(self) -> QWidget:
-        """创建 LLM 设置 Tab"""
+        """创建 LLM 设置 Tab - 包含基础设置和高级设置"""
+        
+        # 使用 QScrollArea 包装内容
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setStyleSheet(f"QScrollArea {{ border: none; background-color: {BACKGROUND}; }}")
         
         tab = QWidget()
         layout = QVBoxLayout(tab)
         layout.setSpacing(12)
         layout.setContentsMargins(16, 16, 16, 16)
         
+        # 基础设置
         llm_group = QGroupBox("大模型设置")
+        llm_group.setStyleSheet(f"""
+            QGroupBox {{
+                color: {TEXT_PRIMARY};
+                font-weight: 500;
+                border: 1px solid {BORDER_SUBTLE};
+                border-radius: 8px;
+                margin-top: 12px;
+                padding-top: 8px;
+            }}
+            QGroupBox::title {{
+                color: {TEXT_SECONDARY};
+                padding: 0 8px;
+            }}
+        """)
         llm_layout = QVBoxLayout(llm_group)
         
         llm_form = QFormLayout()
@@ -675,19 +698,107 @@ class MainWindow(QMainWindow):
         
         llm_layout.addLayout(llm_form)
         layout.addWidget(llm_group)
+        
+        # 生成参数（高级设置）
+        gen_group = QGroupBox("生成参数")
+        gen_group.setStyleSheet(llm_group.styleSheet())
+        gen_form = QFormLayout(gen_group)
+        
+        self.temp_spin = QDoubleSpinBox()
+        self.temp_spin.setRange(0.0, 2.0)
+        self.temp_spin.setSingleStep(0.1)
+        self.temp_spin.setDecimals(1)
+        self.temp_spin.setToolTip("温度越高，回答越随机；越低越确定")
+        gen_form.addRow("温度 (temperature):", self.temp_spin)
+        
+        self.max_tokens_spin = QSpinBox()
+        self.max_tokens_spin.setRange(100, 4000)
+        self.max_tokens_spin.setToolTip("单次生成的最大 token 数")
+        gen_form.addRow("最大 Token (非流式):", self.max_tokens_spin)
+        
+        self.max_tokens_stream_spin = QSpinBox()
+        self.max_tokens_stream_spin.setRange(100, 4000)
+        self.max_tokens_stream_spin.setToolTip("流式生成的最大 token 数")
+        gen_form.addRow("最大 Token (流式):", self.max_tokens_stream_spin)
+        
+        self.reasoning_combo = QComboBox()
+        self.reasoning_combo.addItems(["none", "minimal", "low", "medium", "high", "xhigh"])
+        self.reasoning_combo.setToolTip("Qwen 模型的推理努力程度")
+        gen_form.addRow("推理努力:", self.reasoning_combo)
+        
+        layout.addWidget(gen_group)
+        
+        # 提示词模板（高级设置）
+        prompt_group = QGroupBox("提示词模板")
+        prompt_group.setStyleSheet(llm_group.styleSheet())
+        prompt_form = QFormLayout(prompt_group)
+        
+        self.prompt_base_input = QLineEdit()
+        self.prompt_base_input.setToolTip("系统提示词基础")
+        prompt_form.addRow("基础提示词:", self.prompt_base_input)
+        
+        self.prompt_words_input = QLineEdit()
+        self.prompt_words_input.setToolTip("期望回答字数范围")
+        prompt_form.addRow("字数范围:", self.prompt_words_input)
+        
+        self.prompt_theme_input = QLineEdit()
+        self.prompt_theme_input.setToolTip("面试主题")
+        prompt_form.addRow("主题:", self.prompt_theme_input)
+        
+        layout.addWidget(prompt_group)
+        
+        # 保存按钮
+        save_btn = QPushButton("💾 保存配置")
+        save_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #0078D4;
+                color: #FFFFFF;
+                border: none;
+                border-radius: 6px;
+                padding: 8px 20px;
+                font-size: 14px;
+            }
+            QPushButton:hover {
+                background-color: #1084D8;
+            }
+        """)
+        save_btn.clicked.connect(self._save_config)
+        layout.addWidget(save_btn)
+        
         layout.addStretch()
         
-        return tab
+        scroll_area.setWidget(tab)
+        return scroll_area
     
     def _create_stt_tab(self) -> QWidget:
-        """创建 STT 设置 Tab"""
+        """创建 STT 设置 Tab - 包含基础设置和高级设置"""
+        
+        # 使用 QScrollArea 包装内容
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setStyleSheet(f"QScrollArea {{ border: none; background-color: {BACKGROUND}; }}")
         
         tab = QWidget()
         layout = QVBoxLayout(tab)
         layout.setSpacing(12)
         layout.setContentsMargins(16, 16, 16, 16)
         
+        # 基础设置
         stt_group = QGroupBox("语音识别 (STT) 设置")
+        stt_group.setStyleSheet(f"""
+            QGroupBox {{
+                color: {TEXT_PRIMARY};
+                font-weight: 500;
+                border: 1px solid {BORDER_SUBTLE};
+                border-radius: 8px;
+                margin-top: 12px;
+                padding-top: 8px;
+            }}
+            QGroupBox::title {{
+                color: {TEXT_SECONDARY};
+                padding: 0 8px;
+            }}
+        """)
         stt_layout = QVBoxLayout(stt_group)
         
         stt_form = QFormLayout()
@@ -719,9 +830,113 @@ class MainWindow(QMainWindow):
         
         stt_layout.addLayout(stt_form)
         layout.addWidget(stt_group)
+        
+        # 自动分句参数（高级设置）
+        auto_group = QGroupBox("自动分句参数（仅自动模式生效）")
+        auto_group.setStyleSheet(stt_group.styleSheet())
+        auto_form = QFormLayout(auto_group)
+        
+        self.volume_threshold_spin = QDoubleSpinBox()
+        self.volume_threshold_spin.setRange(0.001, 0.1)
+        self.volume_threshold_spin.setSingleStep(0.001)
+        self.volume_threshold_spin.setDecimals(3)
+        self.volume_threshold_spin.setToolTip("RMS 音量阈值，越大越不敏感")
+        auto_form.addRow("音量阈值:", self.volume_threshold_spin)
+        
+        self.voice_ratio_spin = QDoubleSpinBox()
+        self.voice_ratio_spin.setRange(1.0, 10.0)
+        self.voice_ratio_spin.setSingleStep(0.1)
+        self.voice_ratio_spin.setToolTip("起始语音阈值倍数")
+        auto_form.addRow("语音倍数:", self.voice_ratio_spin)
+        
+        self.silence_ratio_spin = QDoubleSpinBox()
+        self.silence_ratio_spin.setRange(1.0, 10.0)
+        self.silence_ratio_spin.setSingleStep(0.1)
+        self.silence_ratio_spin.setToolTip("语音保持阈值倍数")
+        auto_form.addRow("静音倍数:", self.silence_ratio_spin)
+        
+        self.noise_alpha_spin = QDoubleSpinBox()
+        self.noise_alpha_spin.setRange(0.01, 0.5)
+        self.noise_alpha_spin.setSingleStep(0.01)
+        self.noise_alpha_spin.setDecimals(2)
+        self.noise_alpha_spin.setToolTip("噪声底 EMA 更新系数")
+        auto_form.addRow("噪声系数:", self.noise_alpha_spin)
+        
+        self.pause_seconds_spin = QDoubleSpinBox()
+        self.pause_seconds_spin.setRange(0.2, 3.0)
+        self.pause_seconds_spin.setSingleStep(0.1)
+        self.pause_seconds_spin.setToolTip("静音多久判定句子结束")
+        auto_form.addRow("静音时长 (秒):", self.pause_seconds_spin)
+        
+        self.min_sentence_spin = QDoubleSpinBox()
+        self.min_sentence_spin.setRange(1.0, 5.0)
+        self.min_sentence_spin.setSingleStep(0.5)
+        self.min_sentence_spin.setToolTip("最短句长，太短不触发")
+        auto_form.addRow("最短句 (秒):", self.min_sentence_spin)
+        
+        self.max_sentence_spin = QDoubleSpinBox()
+        self.max_sentence_spin.setRange(5.0, 30.0)
+        self.max_sentence_spin.setSingleStep(1.0)
+        self.max_sentence_spin.setToolTip("最长句长，超时强制切分")
+        auto_form.addRow("最长句 (秒):", self.max_sentence_spin)
+        
+        self.resume_chunks_spin = QSpinBox()
+        self.resume_chunks_spin.setRange(1, 10)
+        self.resume_chunks_spin.setToolTip("从静音恢复需要的有声块数")
+        auto_form.addRow("恢复块数:", self.resume_chunks_spin)
+        
+        layout.addWidget(auto_group)
+        
+        # 下载与语言（高级设置）
+        download_group = QGroupBox("下载与语言")
+        download_group.setStyleSheet(stt_group.styleSheet())
+        download_form = QFormLayout(download_group)
+        
+        self.download_mirror_input = QLineEdit()
+        self.download_mirror_input.setToolTip("HuggingFace 镜像地址")
+        download_form.addRow("下载镜像:", self.download_mirror_input)
+        
+        self.cache_dir_input = QLineEdit()
+        self.cache_dir_input.setToolTip("模型缓存目录，留空使用默认")
+        download_form.addRow("缓存目录:", self.cache_dir_input)
+        
+        self.stt_language_combo = QComboBox()
+        self.stt_language_combo.addItems(["zh", "en", "ja", "auto"])
+        self.stt_language_combo.setToolTip("转录语言")
+        download_form.addRow("转录语言:", self.stt_language_combo)
+        
+        self.stt_hotwords_input = QLineEdit()
+        self.stt_hotwords_input.setToolTip("热词列表，空格分隔")
+        download_form.addRow("热词:", self.stt_hotwords_input)
+        
+        self.stt_model_path_input = QLineEdit()
+        self.stt_model_path_input.setToolTip("本地模型路径，留空自动下载")
+        download_form.addRow("本地模型路径:", self.stt_model_path_input)
+        
+        layout.addWidget(download_group)
+        
+        # 保存按钮
+        save_btn = QPushButton("💾 保存配置")
+        save_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #0078D4;
+                color: #FFFFFF;
+                border: none;
+                border-radius: 6px;
+                padding: 8px 20px;
+                font-size: 14px;
+            }
+            QPushButton:hover {
+                background-color: #1084D8;
+            }
+        """)
+        save_btn.clicked.connect(self._save_config)
+        layout.addWidget(save_btn)
+        
         layout.addStretch()
         
-        return tab
+        scroll_area.setWidget(tab)
+        return scroll_area
     
     def _create_display_tab(self) -> QWidget:
         """创建显示设置 Tab - Overlay 高度/宽度比例、字体大小、热键配置"""
@@ -792,6 +1007,133 @@ class MainWindow(QMainWindow):
         layout.addStretch()
         
         return tab
+    
+    def _create_log_tab(self) -> QWidget:
+        """创建日志 Tab - 显示转录日志和系统日志"""
+        
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setSpacing(12)
+        layout.setContentsMargins(16, 16, 16, 16)
+        
+        # 转录日志
+        transcription_group = QGroupBox("转录日志")
+        transcription_group.setStyleSheet(f"""
+            QGroupBox {{
+                color: {TEXT_PRIMARY};
+                font-weight: 500;
+                border: 1px solid {BORDER_SUBTLE};
+                border-radius: 8px;
+                margin-top: 12px;
+                padding-top: 8px;
+            }}
+            QGroupBox::title {{
+                color: {TEXT_SECONDARY};
+                padding: 0 8px;
+            }}
+        """)
+        transcription_layout = QVBoxLayout(transcription_group)
+        
+        # 转录日志文本框
+        self.transcription_log_text = QTextEdit()
+        self.transcription_log_text.setReadOnly(True)
+        self.transcription_log_text.setStyleSheet(f"""
+            QTextEdit {{
+                background-color: {BACKGROUND};
+                color: {TEXT_SECONDARY};
+                border: 1px solid {BORDER_SUBTLE};
+                border-radius: 4px;
+                padding: 8px;
+                font-family: 'Consolas', 'Monaco', monospace;
+                font-size: 12px;
+            }}
+        """)
+        self.transcription_log_text.setPlaceholderText("暂无转录日志...")
+        transcription_layout.addWidget(self.transcription_log_text)
+        
+        # 转录日志按钮
+        transcription_btn_layout = QHBoxLayout()
+        
+        clear_transcription_btn = QPushButton("清空转录日志")
+        clear_transcription_btn.setStyleSheet(DANGER_BUTTON)
+        clear_transcription_btn.clicked.connect(self._clear_transcription_log)
+        transcription_btn_layout.addWidget(clear_transcription_btn)
+        
+        transcription_btn_layout.addStretch()
+        transcription_layout.addLayout(transcription_btn_layout)
+        
+        layout.addWidget(transcription_group)
+        
+        # 系统日志
+        system_group = QGroupBox("系统日志")
+        system_group.setStyleSheet(transcription_group.styleSheet())
+        system_layout = QVBoxLayout(system_group)
+        
+        # 系统日志文本框
+        self.system_log_text = QTextEdit()
+        self.system_log_text.setReadOnly(True)
+        self.system_log_text.setStyleSheet(self.transcription_log_text.styleSheet())
+        self.system_log_text.setPlaceholderText("暂无系统日志...")
+        system_layout.addWidget(self.system_log_text)
+        
+        # 系统日志按钮
+        system_btn_layout = QHBoxLayout()
+        
+        refresh_log_btn = QPushButton("刷新日志")
+        refresh_log_btn.setStyleSheet(SECONDARY_BUTTON)
+        refresh_log_btn.clicked.connect(self._refresh_system_log)
+        system_btn_layout.addWidget(refresh_log_btn)
+        
+        open_log_btn = QPushButton("打开日志文件夹")
+        open_log_btn.setStyleSheet(SECONDARY_BUTTON)
+        open_log_btn.clicked.connect(self._open_log_folder)
+        system_btn_layout.addWidget(open_log_btn)
+        
+        system_btn_layout.addStretch()
+        system_layout.addLayout(system_btn_layout)
+        
+        layout.addWidget(system_group)
+        
+        # 启动定时器刷新日志
+        self.log_refresh_timer = QTimer()
+        self.log_refresh_timer.timeout.connect(self._refresh_logs_display)
+        self.log_refresh_timer.start(2000)  # 每 2 秒刷新
+        
+        layout.addStretch()
+        
+        return tab
+    
+    def _refresh_logs_display(self):
+        """刷新日志显示"""
+        # 刷新转录日志
+        if hasattr(self, 'transcription_log_text') and self.transcription_log_text:
+            if self.transcription_log_data:
+                self.transcription_log_text.setText("\n".join(self.transcription_log_data))
+            else:
+                self.transcription_log_text.clear()
+        
+        # 刷新系统日志
+        self._refresh_system_log()
+    
+    def _refresh_system_log(self):
+        """刷新系统日志显示"""
+        if not hasattr(self, 'system_log_text') or not self.system_log_text:
+            return
+        
+        try:
+            log_dir = os.path.join(os.getcwd(), 'logs')
+            system_log_path = os.path.join(log_dir, 'system.log')
+            
+            if os.path.exists(system_log_path):
+                with open(system_log_path, 'r', encoding='utf-8') as f:
+                    # 只读取最后 100 行
+                    lines = f.readlines()
+                    last_lines = lines[-100:] if len(lines) > 100 else lines
+                    self.system_log_text.setText("".join(last_lines))
+            else:
+                self.system_log_text.setPlaceholderText("日志文件尚未生成...")
+        except Exception as e:
+            self.system_log_text.setText(f"读取日志失败: {str(e)}")
     
     def _load_audio_devices(self):
         """加载音频设备列表 - 支持输入设备和输出设备"""
