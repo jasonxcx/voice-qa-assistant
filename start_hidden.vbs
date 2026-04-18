@@ -1,3 +1,5 @@
 Set WshShell = CreateObject("WScript.Shell")
-WshShell.CurrentDirectory = CreateObject("Scripting.FileSystemObject").GetParentFolderName(WScript.ScriptFullName)
-WshShell.Run "pythonw app.py", 0, False
+Set fso = CreateObject("Scripting.FileSystemObject")
+WshShell.CurrentDirectory = fso.GetParentFolderName(WScript.ScriptFullName)
+' 使用 python 运行，将输出重定向到日志文件
+WshShell.Run "python app.py", 0, False
