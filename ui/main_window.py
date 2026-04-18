@@ -6,6 +6,7 @@ import asyncio
 import datetime
 import logging
 import os
+import re
 import threading
 import time
 from typing import Any, Dict, List, Optional
@@ -29,13 +30,19 @@ from PySide6.QtWidgets import (
     QPushButton,
     QRadioButton,
     QTextEdit,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from core.logger import log_llm, log_system
 from core.resume_parser import parse_resume
-from ui.styles import MAIN_WINDOW_STYLESHEET, STATUS_COLORS
+from ui.styles import (
+    MAIN_WINDOW_STYLESHEET, STATUS_COLORS,
+    SURFACE, TEXT_PRIMARY, TEXT_SECONDARY, BORDER_SUBTLE, ACCENT_PRIMARY,
+    SECONDARY_BUTTON, DANGER_BUTTON, SUCCESS, ERROR
+)
+from ui.settings_dialog import AdvancedSettingsDialog
 
 
 class MainWindow(QMainWindow):
@@ -67,6 +74,8 @@ class MainWindow(QMainWindow):
         print("[Debug] _load_audio_devices 完成", flush=True)
         self._sync_ui_with_config()
         print("[Debug] _sync_ui_with_config 完成", flush=True)
+        self._load_saved_document()  # 自动加载保存的文档
+        print("[Debug] _load_saved_document 完成", flush=True)
 
         # 启动音量监控（独立于录音）
         self.audio_capture.start_monitoring()
@@ -126,16 +135,58 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.status_label)
         
         # 文档导入
-        resume_group = QGroupBox("文档导入（可选）")
+        resume_group = QGroupBox("知识库文档（可选）")
         resume_layout = QVBoxLayout(resume_group)
         
-        self.resume_path_label = QLabel("未选择文件（将使用通用回答模式）")
-        self.resume_path_label.setStyleSheet("color: #9AA0A6; padding: 8px;")
-        resume_layout.addWidget(self.resume_path_label)
+        # 路径显示/编辑行
+        path_row = QHBoxLayout()
         
-        select_btn = QPushButton(" 选择 Markdown 文件")
-        select_btn.clicked.connect(self._select_resume)
-        resume_layout.addWidget(select_btn)
+        # 状态指示器（文件存在显示绿色checkmark，不存在显示红色warning）
+        self.doc_status_btn = QToolButton()
+        self.doc_status_btn.setFixedSize(24, 24)
+        self.doc_status_btn.setStyleSheet("QToolButton { border: none; background: transparent; }")
+        self.doc_status_btn.setToolTip("文档状态")
+        self.doc_status_btn.setVisible(False)
+        path_row.addWidget(self.doc_status_btn)
+        
+        # 路径输入框
+        self.resume_path_input = QLineEdit()
+        self.resume_path_input.setPlaceholderText("输入 Markdown 文件路径，或点击浏览...")
+        self.resume_path_input.setStyleSheet(f"""
+            QLineEdit {{
+                background-color: {SURFACE};
+                color: {TEXT_PRIMARY};
+                border: 1px solid {BORDER_SUBTLE};
+                border-radius: 4px;
+                padding: 6px 10px;
+                font-size: 12px;
+            }}
+            QLineEdit:focus {{
+                border: 1px solid {ACCENT_PRIMARY};
+            }}
+        """)
+        self.resume_path_input.returnPressed.connect(self._on_resume_path_entered)
+        path_row.addWidget(self.resume_path_input, stretch=1)
+        
+        # 浏览按钮
+        browse_btn = QPushButton("浏览...")
+        browse_btn.setStyleSheet(SECONDARY_BUTTON)
+        browse_btn.clicked.connect(self._select_resume)
+        path_row.addWidget(browse_btn)
+        
+        # 清空按钮
+        clear_btn = QPushButton("清空")
+        clear_btn.setStyleSheet(DANGER_BUTTON)
+        clear_btn.clicked.connect(self._clear_resume)
+        clear_btn.setToolTip("清除文档路径和内容")
+        path_row.addWidget(clear_btn)
+        
+        resume_layout.addLayout(path_row)
+        
+        # 文档摘要显示（可选）
+        self.resume_summary_label = QLabel("")
+        self.resume_summary_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px; padding: 4px;")
+        resume_layout.addWidget(self.resume_summary_label)
         
         layout.addWidget(resume_group)
         
@@ -319,59 +370,32 @@ class MainWindow(QMainWindow):
         self.save_btn.clicked.connect(self._save_config)
         button_layout.addWidget(self.save_btn)
         
+        # 高级设置按钮
+        self.advanced_btn = QPushButton("⚙ 高级设置")
+        self.advanced_btn.setMinimumHeight(45)
+        self.advanced_btn.setStyleSheet(SECONDARY_BUTTON)
+        self.advanced_btn.setToolTip("打开高级配置对话框")
+        self.advanced_btn.clicked.connect(self._open_advanced_settings)
+        button_layout.addWidget(self.advanced_btn)
+        
+        # 查看日志按钮
+        self.view_log_btn = QPushButton("📋 查看日志")
+        self.view_log_btn.setMinimumHeight(45)
+        self.view_log_btn.setStyleSheet(SECONDARY_BUTTON)
+        self.view_log_btn.setToolTip("查看转录日志")
+        self.view_log_btn.clicked.connect(self._open_transcription_log)
+        button_layout.addWidget(self.view_log_btn)
+        
         layout.addLayout(button_layout)
 
         # 字幕状态
         self.caption_status = QLabel("字幕窗口：未显示（点击后显示/隐藏，拖动顶部灰色条移动窗口）")
         self.caption_status.setStyleSheet("color: #9AA0A6; font-size: 11px;")
         layout.addWidget(self.caption_status)
-
-        # 转录日志区域
-        log_group = QGroupBox("转录日志")
-        log_layout = QVBoxLayout(log_group)
-
-        # 转录日志文本框
-        self.transcription_log = QTextEdit()
-        self.transcription_log.setReadOnly(True)
-        self.transcription_log.setMaximumHeight(150)
-        self.transcription_log.setStyleSheet("""
-            QTextEdit {
-                background-color: #1E1E1E;
-                color: #9AA0A6;
-                border: 1px solid #2D2D2D;
-                border-radius: 4px;
-                padding: 8px;
-                font-family: 'Consolas', 'Monaco', monospace;
-                font-size: 12px;
-            }
-        """)
-        self.transcription_log.setPlaceholderText("转录的问题将显示在这里...")
-        log_layout.addWidget(self.transcription_log)
-
-        # 日志控制按钮
-        log_control_layout = QHBoxLayout()
-        self.clear_log_btn = QPushButton("清空日志")
-        self.clear_log_btn.setFixedHeight(28)
-        self.clear_log_btn.setStyleSheet("""
-            QPushButton {
-                background-color: rgba(255, 100, 100, 100);
-                color: #FFFFFF;
-                border: none;
-                border-radius: 4px;
-                padding: 4px 10px;
-                font-size: 11px;
-            }
-            QPushButton:hover {
-                background-color: rgba(255, 100, 100, 150);
-            }
-        """)
-        self.clear_log_btn.clicked.connect(self._clear_transcription_log)
-        log_control_layout.addWidget(self.clear_log_btn)
-        log_control_layout.addStretch()
-        log_layout.addLayout(log_control_layout)
-
-        layout.addWidget(log_group)
-
+        
+        # 转录日志数据（内部存储，不直接显示）
+        self.transcription_log_data = []  # 存储日志条目
+        
         self._update_ui_state()
     
     def _load_audio_devices(self):
@@ -584,24 +608,115 @@ class MainWindow(QMainWindow):
         self._on_overlay_transcription_mode_changed(self.overlay.is_manual_transcription_mode())
     
     def _select_resume(self):
-        """选择文件"""
+        """选择 Markdown 文件"""
+        # 获取当前路径作为起始目录
+        current_path = self.resume_path_input.text() or ""
+        start_dir = os.path.dirname(current_path) if current_path and os.path.exists(current_path) else ""
+        
         file_path, _ = QFileDialog.getOpenFileName(
-            self, "选择文件", "", "Markdown 文件 (*.md);;所有文件 (*.*)"
+            self, "选择知识库文档", start_dir, "Markdown 文件 (*.md *.markdown);;所有文件 (*.*)"
         )
         
         if file_path:
-            try:
-                self.resume_data = parse_resume(file_path)
-                self.resume_path_label.setText(f"[OK] {file_path}")
-                self.resume_path_label.setStyleSheet("color: #4CAF50; padding: 8px;")
-                
-                summary = f"已解析：{self.resume_data.get('name', '未知')} | "
-                summary += f"技能：{len(self.resume_data.get('skills', []))} 项 | "
-                summary += f"经历：{len(self.resume_data.get('experience', []))} 段"
-                self.resume_path_label.setToolTip(summary)
-                
-            except Exception as e:
-                QMessageBox.critical(self, "解析失败", f"解析失败：{str(e)}")
+            self._load_resume_from_path(file_path)
+    
+    def _on_resume_path_entered(self):
+        """用户手动输入路径后按 Enter"""
+        file_path = self.resume_path_input.text().strip()
+        if file_path:
+            self._load_resume_from_path(file_path)
+    
+    def _load_resume_from_path(self, file_path: str):
+        """从指定路径加载文档"""
+        # 验证文件存在
+        if not os.path.exists(file_path):
+            self._update_doc_status(False, "文件不存在")
+            self.resume_summary_label.setText("⚠ 文件不存在，请检查路径")
+            self.resume_summary_label.setStyleSheet(f"color: {ERROR}; font-size: 11px;")
+            return
+        
+        # 验证文件扩展名
+        if not file_path.lower().endswith(('.md', '.markdown')):
+            self._update_doc_status(False, "文件格式错误")
+            self.resume_summary_label.setText("⚠ 仅支持 Markdown 文件 (.md)")
+            self.resume_summary_label.setStyleSheet(f"color: {ERROR}; font-size: 11px;")
+            return
+        
+        try:
+            # 解析文档
+            self.resume_data = parse_resume(file_path)
+            
+            # 更新 UI
+            self.resume_path_input.setText(file_path)
+            self._update_doc_status(True, "文档已加载")
+            
+            # 显示摘要
+            summary = f"✓ {self.resume_data.get('name', '未知')} | "
+            summary += f"技能 {len(self.resume_data.get('skills', []))} 项 | "
+            summary += f"经历 {len(self.resume_data.get('experience', []))} 段"
+            self.resume_summary_label.setText(summary)
+            self.resume_summary_label.setStyleSheet(f"color: {SUCCESS}; font-size: 11px;")
+            
+            # 保存路径到配置
+            self.config.set("document.path", file_path)
+            log_system(f"文档已加载并保存路径: {file_path}", logging.INFO)
+            
+        except Exception as e:
+            self._update_doc_status(False, "解析失败")
+            self.resume_summary_label.setText(f"⚠ 解析失败: {str(e)}")
+            self.resume_summary_label.setStyleSheet(f"color: {ERROR}; font-size: 11px;")
+            QMessageBox.warning(self, "解析失败", f"无法解析文档：{str(e)}")
+    
+    def _update_doc_status(self, is_valid: bool, tooltip: str = ""):
+        """更新文档状态指示器"""
+        self.doc_status_btn.setVisible(True)
+        if is_valid:
+            self.doc_status_btn.setText("✓")
+            self.doc_status_btn.setStyleSheet(f"""
+                QToolButton {{
+                    border: none;
+                    background: transparent;
+                    color: {SUCCESS};
+                    font-size: 16px;
+                    font-weight: bold;
+                }}
+            """)
+        else:
+            self.doc_status_btn.setText("⚠")
+            self.doc_status_btn.setStyleSheet(f"""
+                QToolButton {{
+                    border: none;
+                    background: transparent;
+                    color: {ERROR};
+                    font-size: 16px;
+                    font-weight: bold;
+                }}
+            """)
+        self.doc_status_btn.setToolTip(tooltip)
+    
+    def _clear_resume(self):
+        """清除文档"""
+        self.resume_data = None
+        self.resume_path_input.clear()
+        self.doc_status_btn.setVisible(False)
+        self.resume_summary_label.setText("")
+        
+        # 清除配置中的路径
+        self.config.set("document.path", "")
+        log_system("文档已清除", logging.INFO)
+    
+    def _load_saved_document(self):
+        """启动时自动加载保存的文档"""
+        saved_path = self.config.document_path
+        if saved_path and os.path.exists(saved_path):
+            log_system(f"自动加载保存的文档: {saved_path}", logging.INFO)
+            self._load_resume_from_path(saved_path)
+        elif saved_path:
+            # 路径存在但文件不存在
+            self.resume_path_input.setText(saved_path)
+            self._update_doc_status(False, "文件不存在")
+            self.resume_summary_label.setText("⚠ 保存的文件不存在，请重新选择")
+            self.resume_summary_label.setStyleSheet(f"color: {ERROR}; font-size: 11px;")
     
     def _on_llm_changed(self, index: int):
         """切换 LLM 模式"""
@@ -1017,7 +1132,10 @@ class MainWindow(QMainWindow):
         # 添加时间戳
         timestamp = datetime.datetime.now().strftime("%H:%M:%S")
         log_entry = f"[{timestamp}] 问题：{text}"
-        self.transcription_log.append(log_entry)
+        self.transcription_log_data.append(log_entry)  # 存储到列表
+        
+        # 同时添加回答日志占位（稍后填充）
+        self._pending_answer_log_index = len(self.transcription_log_data)
 
         # 添加新问题到字幕窗口（开始新的一页），先显示问题，回答稍后流式显示
         self.overlay.caption_history.add_new_question(text)
@@ -1343,11 +1461,53 @@ class MainWindow(QMainWindow):
         # 获取当前显示的文本并追加新token
         current_text = self.overlay.caption_history.pages[page_index]["answer"] if 0 <= page_index < len(self.overlay.caption_history.pages) else ""
         new_text = current_text + token
+        
+        # 过滤掉思考内容（<think>...</think> 标签）
+        # 移除 <think>...</think> 标签及其内容
+        new_text = re.sub(r'<think>.*?</think>', '', new_text, flags=re.DOTALL)
+        # 移除未闭合的 <think> 标签开头（等待后续 token）
+        new_text = re.sub(r'<think>.*', '', new_text)
+        
         self.overlay.caption_history.update_answer_streaming(new_text, page_index)
 
     @Slot(str)
     def _on_generation_complete(self, answer: str):
-        """生成完成 - 更新状态"""
+        """生成完成 - 更新状态并清理思考内容"""
+        # 调试：打印原始答案
+        print(f"[COMPLETE_DEBUG] raw answer length: {len(answer)}", flush=True)
+        if len(answer) > 100:
+            print(f"[COMPLETE_DEBUG] first 100 chars: '{answer[:100]}'", flush=True)
+        
+        # 最终清理：确保所有思考内容都被移除
+        # 移除 ALSE...ALSE 标签及其内容
+        clean_answer = re.sub(r'ALSE.*?ALSE', '', answer, flags=re.DOTALL)
+        # 移除未闭合的 ALSE 标签
+        clean_answer = re.sub(r'ALSE.*', '', clean_answer)
+        # 移除可能的残留标签
+        clean_answer = re.sub(r'</?ALSE>', '', clean_answer)
+        
+        # 格式2: <tool_call>...ྎ（DeepSeek格式）
+        clean_answer = re.sub(r'ALSE.*?ALSE', '', clean_answer, flags=re.DOTALL)
+        clean_answer = re.sub(r'ALSE.*', '', clean_answer)
+        
+        # 格式3: <|thought|>...<|/thought|>
+        clean_answer = re.sub(r'<\|thought\|>.*?<\|/thought\|>', '', clean_answer, flags=re.DOTALL)
+        clean_answer = re.sub(r'<\|thought\|>.*', '', clean_answer)
+        
+        # 格式4: <|reasoning|>...<|/reasoning|>
+        clean_answer = re.sub(r'<\|reasoning\|>.*?<\|/reasoning\|>', '', clean_answer, flags=re.DOTALL)
+        clean_answer = re.sub(r'<\|reasoning\|>.*', '', clean_answer)
+        
+        # 格式5: [思考]...[/思考] 或 【思考】...【/思考】
+        clean_answer = re.sub(r'\[思考\].*?\[/思考\]', '', clean_answer, flags=re.DOTALL)
+        clean_answer = re.sub(r'【思考】.*?【/思考】', '', clean_answer, flags=re.DOTALL)
+        
+        # 如果清理后的答案与当前字幕不同，更新字幕
+        if clean_answer != answer:
+            current_page = self.overlay.caption_history.current_page
+            if 0 <= current_page < len(self.overlay.caption_history.pages):
+                self.overlay.caption_history.update_answer_streaming(clean_answer, current_page)
+        
         self.status_label.setText("● 就绪")
         self.status_label.setStyleSheet(f"color: {STATUS_COLORS['idle']};")
 
@@ -1382,7 +1542,47 @@ class MainWindow(QMainWindow):
 
     def _clear_transcription_log(self):
         """清空转录日志"""
-        self.transcription_log.clear()
+        self.transcription_log_data.clear()
+    
+    def _open_transcription_log(self):
+        """打开转录日志对话框"""
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QTextEdit, QPushButton
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle("转录日志")
+        dialog.setMinimumSize(500, 400)
+        
+        layout = QVBoxLayout(dialog)
+        
+        log_text = QTextEdit()
+        log_text.setReadOnly(True)
+        log_text.setStyleSheet(f"""
+            QTextEdit {{
+                background-color: {BACKGROUND};
+                color: {TEXT_SECONDARY};
+                border: 1px solid {BORDER_SUBTLE};
+                border-radius: 4px;
+                padding: 8px;
+                font-family: 'Consolas', 'Monaco', monospace;
+                font-size: 12px;
+            }}
+        """)
+        
+        # 显示所有日志
+        if self.transcription_log_data:
+            log_text.setText("\n".join(self.transcription_log_data))
+        else:
+            log_text.setPlaceholderText("暂无转录日志...")
+        
+        layout.addWidget(log_text)
+        
+        # 清空按钮
+        clear_btn = QPushButton("清空日志")
+        clear_btn.setStyleSheet(DANGER_BUTTON)
+        clear_btn.clicked.connect(lambda: (self.transcription_log_data.clear(), log_text.clear()))
+        layout.addWidget(clear_btn)
+        
+        dialog.exec()
 
     def _open_log_folder(self):
         """打开日志文件夹"""
@@ -1408,6 +1608,11 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "保存失败", f"无法保存配置：{str(e)}")
             log_system(f"保存配置失败：{str(e)}", logging.ERROR)
+    
+    def _open_advanced_settings(self):
+        """打开高级设置对话框"""
+        dialog = AdvancedSettingsDialog(self.config, self)
+        dialog.exec()
     
     def closeEvent(self, event):
         """关闭窗口时的处理"""
