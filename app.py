@@ -54,9 +54,15 @@ def main():
         print(f"  - STT 模型：{config.stt_model}")
         print(f"  - 音频设备索引：{config.audio_device_index}")
     except FileNotFoundError as e:
-        print(f"[Error] 配置文件不存在！{e}")
+        print(f"[Error] 配置文件不存在且无法从模板创建！{e}")
         traceback.print_exc()
         sys.exit(1)
+    
+    # 检查是否需要配置 API Key
+    if config.llm_api_key == "YOUR_DASHSCOPE_API_KEY" or config.llm_api_key == "sk-xxxxxxx":
+        print("\n" + "=" * 50)
+        print("[提示] 请先编辑 config.yaml 配置有效的 API Key")
+        print("=" * 50)
 
     print("\n[1/5] 创建 Qt 应用...")
     app = QApplication(sys.argv)
@@ -118,7 +124,7 @@ def main():
     main_window.show()
 
     # 运行
-    sys.exit(app.exec_())
+    sys.exit(app.exec())
 
 
 if __name__ == "__main__":

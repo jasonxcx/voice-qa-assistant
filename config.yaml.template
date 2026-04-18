@@ -29,7 +29,21 @@ llm:
     openai:
       api_key: sk-xxxxxxx
       base_url: https://coding.dashscope.aliyuncs.com/v1
-      model: qwen3.5-plus
+      model: qwen-plus
+
+# 文档配置
+document:
+  # Markdown 文档路径（知识库），留空表示未配置
+  path: ""
+
+# 音频配置
+audio:
+  # 是否使用麦克风（True=麦克风输入，False=扬声器输出 loopback）
+  use_microphone: false
+  # 输入设备索引（麦克风），null 表示使用默认
+  input_device_index: null
+  # 输出设备索引（扬声器），null 表示使用默认
+  output_device_index: null
 
 # STT 配置
 stt:
