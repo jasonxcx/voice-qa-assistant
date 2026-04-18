@@ -32,9 +32,17 @@ class Config:
         self.load()
 
     def load(self) -> dict:
-        """加载配置文件"""
+        """加载配置文件，如果不存在则从 template 复制"""
         if not self.config_path.exists():
-            raise FileNotFoundError(f"配置文件不存在：{self.config_path}")
+            # 尝试从 template 复制
+            template_path = self.config_path.parent / "config.yaml.template"
+            if template_path.exists():
+                print(f"[Config] config.yaml 不存在，从 template 复制...")
+                import shutil
+                shutil.copy(template_path, self.config_path)
+                print(f"[Config] 已创建 config.yaml，请检查配置")
+            else:
+                raise FileNotFoundError(f"配置文件和模板都不存在：{self.config_path}")
 
         with open(self.config_path, 'r', encoding='utf-8') as f:
             self.config = yaml.safe_load(f)
@@ -182,6 +190,11 @@ class Config:
     def use_microphone(self) -> bool:
         """是否使用麦克风（如果为false，表示优先使用输出设备如扬声器进行监听）"""
         return self.get("audio.use_microphone", False)
+
+    @property
+    def document_path(self) -> str:
+        """获取文档路径（Markdown 知识库）"""
+        return self.get("document.path", "")
 
     @property
     def stt_model(self) -> str:
