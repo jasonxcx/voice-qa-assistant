@@ -29,6 +29,8 @@ from PySide6.QtWidgets import (
     QProgressDialog,
     QPushButton,
     QRadioButton,
+    QScrollArea,
+    QTabWidget,
     QTextEdit,
     QToolButton,
     QVBoxLayout,
@@ -39,7 +41,7 @@ from core.logger import log_llm, log_system
 from core.resume_parser import parse_resume
 from ui.styles import (
     MAIN_WINDOW_STYLESHEET, STATUS_COLORS,
-    SURFACE, TEXT_PRIMARY, TEXT_SECONDARY, BORDER_SUBTLE, ACCENT_PRIMARY,
+    BACKGROUND, SURFACE, TEXT_PRIMARY, TEXT_SECONDARY, BORDER_SUBTLE, ACCENT_PRIMARY,
     SECONDARY_BUTTON, DANGER_BUTTON, SUCCESS, ERROR
 )
 from ui.settings_dialog import AdvancedSettingsDialog
@@ -65,6 +67,9 @@ class MainWindow(QMainWindow):
         self.audio_output_devices: List[Dict] = []
         self.is_model_loading = False
         self._stt_download_canceled = False
+        
+        # Feature flag: 使用 Tab 布局（从配置读取，默认 True）
+        self._use_new_layout = self.config.get("ui.use_tab_layout", True)
         
         self._init_ui()
         print("[Debug] _init_ui 完成", flush=True)
@@ -108,8 +113,7 @@ class MainWindow(QMainWindow):
         self.audio_capture.restart_monitoring()
     
     def _init_ui(self):
-        """初始化 UI"""
-
+        """初始化 UI - 根据 feature flag 选择布局"""
         
         # 从配置读取图标路径，如果配置为空或文件不存在则不设置图标
         icon_path = self.config.icon_path
@@ -123,6 +127,17 @@ class MainWindow(QMainWindow):
         central_widget = QWidget()
         central_widget.setObjectName("centralWidget")
         self.setCentralWidget(central_widget)
+        
+        # 根据 feature flag 选择布局
+        if self._use_new_layout:
+            self._init_ui_tabs(central_widget)
+        else:
+            self._init_ui_classic(central_widget)
+        
+        self._update_ui_state()
+    
+    def _init_ui_classic(self, central_widget: QWidget):
+        """经典布局 - 使用 QGroupBox 分组"""
         
         layout = QVBoxLayout(central_widget)
         layout.setSpacing(12)
@@ -395,8 +410,388 @@ class MainWindow(QMainWindow):
         
         # 转录日志数据（内部存储，不直接显示）
         self.transcription_log_data = []  # 存储日志条目
+    
+    def _init_ui_tabs(self, central_widget: QWidget):
+        """Tab 布局 - 使用 QTabWidget 分组"""
         
-        self._update_ui_state()
+        layout = QVBoxLayout(central_widget)
+        layout.setSpacing(8)
+        layout.setContentsMargins(12, 12, 12, 12)
+        
+        # 状态标签（始终显示在顶部）
+        self.status_label = QLabel("● 就绪")
+        self.status_label.setObjectName("statusLabel")
+        self.status_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.status_label)
+        
+        # 创建 Tab Widget
+        self.tab_widget = QTabWidget()
+        self.tab_widget.setObjectName("mainTabWidget")
+        layout.addWidget(self.tab_widget, stretch=1)
+        
+        # 创建各个 Tab
+        self.tab_widget.addTab(self._create_main_tab(), "主面板")
+        self.tab_widget.addTab(self._create_llm_tab(), "LLM 设置")
+        self.tab_widget.addTab(self._create_stt_tab(), "STT 设置")
+        self.tab_widget.addTab(self._create_display_tab(), "显示设置")
+        
+        # 字幕状态（始终显示在底部）
+        self.caption_status = QLabel("字幕窗口：未显示（点击后显示/隐藏，拖动顶部灰色条移动窗口）")
+        self.caption_status.setStyleSheet("color: #9AA0A6; font-size: 11px;")
+        layout.addWidget(self.caption_status)
+        
+        # 转录日志数据（内部存储，不直接显示）
+        self.transcription_log_data = []
+    
+    def _create_main_tab(self) -> QWidget:
+        """创建主面板 Tab - 状态显示、文档路径、控制按钮"""
+        
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setSpacing(12)
+        layout.setContentsMargins(16, 16, 16, 16)
+        
+        # 文档导入
+        resume_group = QGroupBox("知识库文档（可选）")
+        resume_layout = QVBoxLayout(resume_group)
+        
+        # 路径显示/编辑行
+        path_row = QHBoxLayout()
+        
+        # 状态指示器
+        self.doc_status_btn = QToolButton()
+        self.doc_status_btn.setFixedSize(24, 24)
+        self.doc_status_btn.setStyleSheet("QToolButton { border: none; background: transparent; }")
+        self.doc_status_btn.setToolTip("文档状态")
+        self.doc_status_btn.setVisible(False)
+        path_row.addWidget(self.doc_status_btn)
+        
+        # 路径输入框
+        self.resume_path_input = QLineEdit()
+        self.resume_path_input.setPlaceholderText("输入 Markdown 文件路径，或点击浏览...")
+        self.resume_path_input.setStyleSheet(f"""
+            QLineEdit {{
+                background-color: {SURFACE};
+                color: {TEXT_PRIMARY};
+                border: 1px solid {BORDER_SUBTLE};
+                border-radius: 4px;
+                padding: 6px 10px;
+                font-size: 12px;
+            }}
+            QLineEdit:focus {{
+                border: 1px solid {ACCENT_PRIMARY};
+            }}
+        """)
+        self.resume_path_input.returnPressed.connect(self._on_resume_path_entered)
+        path_row.addWidget(self.resume_path_input, stretch=1)
+        
+        # 浏览按钮
+        browse_btn = QPushButton("浏览...")
+        browse_btn.setStyleSheet(SECONDARY_BUTTON)
+        browse_btn.clicked.connect(self._select_resume)
+        path_row.addWidget(browse_btn)
+        
+        # 清空按钮
+        clear_btn = QPushButton("清空")
+        clear_btn.setStyleSheet(DANGER_BUTTON)
+        clear_btn.clicked.connect(self._clear_resume)
+        clear_btn.setToolTip("清除文档路径和内容")
+        path_row.addWidget(clear_btn)
+        
+        resume_layout.addLayout(path_row)
+        
+        # 文档摘要显示
+        self.resume_summary_label = QLabel("")
+        self.resume_summary_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px; padding: 4px;")
+        resume_layout.addWidget(self.resume_summary_label)
+        
+        layout.addWidget(resume_group)
+        
+        # 音频设置（简化版）
+        audio_group = QGroupBox("音频设置")
+        audio_layout = QVBoxLayout(audio_group)
+        
+        audio_form = QFormLayout()
+        
+        # 设备类型选择
+        device_type_layout = QHBoxLayout()
+        self.device_type_group = QButtonGroup(self)
+        self.mic_radio = QRadioButton("麦克风")
+        self.speaker_radio = QRadioButton("扬声器/耳机")
+        self.speaker_radio.setChecked(True)
+        self.device_type_group.addButton(self.mic_radio, 0)
+        self.device_type_group.addButton(self.speaker_radio, 1)
+        self.device_type_group.idToggled.connect(self._on_device_type_changed)
+        device_type_layout.addWidget(self.mic_radio)
+        device_type_layout.addWidget(self.speaker_radio)
+        device_type_layout.addStretch()
+        audio_form.addRow("监听源:", device_type_layout)
+        
+        # 音频设备选择
+        device_select_layout = QHBoxLayout()
+        self.audio_device_combo = QComboBox()
+        self.refresh_devices_btn = QPushButton("刷新")
+        self.refresh_devices_btn.setFixedWidth(60)
+        self.refresh_devices_btn.setFixedHeight(28)
+        self.refresh_devices_btn.clicked.connect(self._refresh_audio_devices)
+        device_select_layout.addWidget(self.audio_device_combo)
+        device_select_layout.addWidget(self.refresh_devices_btn)
+        audio_form.addRow("设备:", device_select_layout)
+        
+        # 音量监控
+        self.volume_bar = QLabel()
+        self.volume_bar.setMinimumHeight(20)
+        self.volume_bar.setStyleSheet("background-color: #2D2D2D; border-radius: 4px;")
+        audio_form.addRow("音量:", self.volume_bar)
+        
+        self.volume_label = QLabel("音量：0%")
+        self.volume_label.setStyleSheet("color: #9AA0A6; font-size: 11px;")
+        audio_form.addRow("", self.volume_label)
+        
+        audio_layout.addLayout(audio_form)
+        layout.addWidget(audio_group)
+        
+        # 控制按钮
+        button_layout = QHBoxLayout()
+        button_layout.setSpacing(8)
+        
+        self.start_btn = QPushButton("▶ 加载模型")
+        self.start_btn.setMinimumHeight(45)
+        self.start_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #0078D4;
+                color: #FFFFFF;
+                border: none;
+                border-radius: 6px;
+                padding: 8px 20px;
+                font-size: 15px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #1084D8;
+            }
+        """)
+        self.start_btn.clicked.connect(self._toggle_listening)
+        button_layout.addWidget(self.start_btn)
+        
+        self.caption_toggle_btn = QPushButton("📑 字幕")
+        self.caption_toggle_btn.setMinimumHeight(45)
+        self.caption_toggle_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #2D2D2D;
+                color: #FFFFFF;
+                border: none;
+                border-radius: 6px;
+                padding: 8px 16px;
+                font-size: 14px;
+            }
+            QPushButton:hover {
+                background-color: #3D3D3D;
+            }
+        """)
+        self.caption_toggle_btn.clicked.connect(self._toggle_caption_window)
+        button_layout.addWidget(self.caption_toggle_btn)
+        
+        self.log_btn = QPushButton("📂 日志")
+        self.log_btn.setMinimumHeight(45)
+        self.log_btn.setStyleSheet(self.caption_toggle_btn.styleSheet())
+        self.log_btn.clicked.connect(self._open_log_folder)
+        button_layout.addWidget(self.log_btn)
+        
+        self.save_btn = QPushButton("💾 保存配置")
+        self.save_btn.setMinimumHeight(45)
+        self.save_btn.setStyleSheet(self.caption_toggle_btn.styleSheet())
+        self.save_btn.clicked.connect(self._save_config)
+        button_layout.addWidget(self.save_btn)
+        
+        self.advanced_btn = QPushButton("⚙ 高级设置")
+        self.advanced_btn.setMinimumHeight(45)
+        self.advanced_btn.setStyleSheet(SECONDARY_BUTTON)
+        self.advanced_btn.setToolTip("打开高级配置对话框")
+        self.advanced_btn.clicked.connect(self._open_advanced_settings)
+        button_layout.addWidget(self.advanced_btn)
+        
+        self.view_log_btn = QPushButton("📋 查看日志")
+        self.view_log_btn.setMinimumHeight(45)
+        self.view_log_btn.setStyleSheet(SECONDARY_BUTTON)
+        self.view_log_btn.setToolTip("查看转录日志")
+        self.view_log_btn.clicked.connect(self._open_transcription_log)
+        button_layout.addWidget(self.view_log_btn)
+        
+        layout.addLayout(button_layout)
+        layout.addStretch()
+        
+        return tab
+    
+    def _create_llm_tab(self) -> QWidget:
+        """创建 LLM 设置 Tab"""
+        
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setSpacing(12)
+        layout.setContentsMargins(16, 16, 16, 16)
+        
+        llm_group = QGroupBox("大模型设置")
+        llm_layout = QVBoxLayout(llm_group)
+        
+        llm_form = QFormLayout()
+        
+        # Provider 选择
+        self.llm_combo = QComboBox()
+        self.llm_combo.addItems(["OpenAI (云端)", "Ollama（本地）", "LM Studio (本地)"])
+        self.llm_combo.currentIndexChanged.connect(self._on_llm_changed)
+        llm_form.addRow("模型模式:", self.llm_combo)
+        
+        # 模型名称输入框
+        self.model_name_input = QLineEdit()
+        self.model_name_input.setPlaceholderText("如：qwen3.5-plus, qwen2.5:7b")
+        self.model_name_input_label = QLabel("模型名称:")
+        llm_form.addRow(self.model_name_input_label, self.model_name_input)
+        
+        # Base URL 输入框
+        self.llm_url = QLineEdit()
+        self.llm_url.setPlaceholderText("http://127.0.0.1")
+        llm_form.addRow("Base URL:", self.llm_url)
+        
+        # LM Studio 模型刷新按钮和下拉框
+        self.refresh_models_btn = QPushButton("🔄 刷新模型列表")
+        self.refresh_models_btn.setToolTip("从 LM Studio 获取可用模型")
+        self.refresh_models_btn.setFixedHeight(28)
+        self.refresh_models_btn.clicked.connect(self._refresh_lmstudio_models)
+        self.refresh_models_btn.setEnabled(False)
+        
+        self.model_combo = QComboBox()
+        self.model_combo.setEditable(True)
+        self.model_combo.setToolTip("从 LM Studio 选择模型（鼠标悬停查看参数）")
+        self.model_combo.setEnabled(False)
+        self.model_combo.currentIndexChanged.connect(self._on_model_combo_changed)
+        
+        self.model_combo_layout = QHBoxLayout()
+        self.model_combo_layout.setSpacing(4)
+        self.model_combo_layout.addWidget(self.model_combo)
+        self.model_combo_layout.addWidget(self.refresh_models_btn)
+        self.model_combo_label = QLabel("选择模型:")
+        llm_form.addRow(self.model_combo_label, self.model_combo_layout)
+        
+        llm_layout.addLayout(llm_form)
+        layout.addWidget(llm_group)
+        layout.addStretch()
+        
+        return tab
+    
+    def _create_stt_tab(self) -> QWidget:
+        """创建 STT 设置 Tab"""
+        
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setSpacing(12)
+        layout.setContentsMargins(16, 16, 16, 16)
+        
+        stt_group = QGroupBox("语音识别 (STT) 设置")
+        stt_layout = QVBoxLayout(stt_group)
+        
+        stt_form = QFormLayout()
+        
+        # STT 模型选择
+        self.stt_model_combo = QComboBox()
+        self.stt_model_combo.addItems([
+            "tiny (75MB, 最快)",
+            "base (143MB, 快)",
+            "small (467MB, 平衡)",
+            "medium (1.5GB, 推荐)",
+            "large-v2 (2.9GB, 最准确)",
+            "large-v3 (3GB, 最新)"
+        ])
+        self.stt_model_combo.setCurrentIndex(3)
+        stt_form.addRow("模型:", self.stt_model_combo)
+        
+        # 计算设备选择
+        self.stt_device_combo = QComboBox()
+        self.stt_device_combo.addItems(["CPU", "CUDA (GPU)"])
+        self.stt_device_combo.setCurrentIndex(1)
+        stt_form.addRow("计算设备:", self.stt_device_combo)
+        
+        # 计算类型选择
+        self.compute_type_combo = QComboBox()
+        self.compute_type_combo.addItems(["float32 (兼容)", "float16 (快速)", "int8 (省显存)"])
+        self.compute_type_combo.setCurrentIndex(0)
+        stt_form.addRow("计算类型:", self.compute_type_combo)
+        
+        stt_layout.addLayout(stt_form)
+        layout.addWidget(stt_group)
+        layout.addStretch()
+        
+        return tab
+    
+    def _create_display_tab(self) -> QWidget:
+        """创建显示设置 Tab - Overlay 高度/宽度比例、字体大小、热键配置"""
+        
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setSpacing(12)
+        layout.setContentsMargins(16, 16, 16, 16)
+        
+        # Overlay 设置
+        overlay_group = QGroupBox("字幕窗口设置")
+        overlay_layout = QVBoxLayout(overlay_group)
+        
+        overlay_form = QFormLayout()
+        
+        # 高度比例（从配置读取）
+        height_ratio = self.config.get("overlay.height_ratio", 0.15)
+        self.height_ratio_label = QLabel(f"{height_ratio:.2f}")
+        overlay_form.addRow("高度比例:", self.height_ratio_label)
+        
+        # 宽度比例（从配置读取）
+        width_ratio = self.config.get("overlay.width_ratio", 0.8)
+        self.width_ratio_label = QLabel(f"{width_ratio:.2f}")
+        overlay_form.addRow("宽度比例:", self.width_ratio_label)
+        
+        # 字体大小（从配置读取）
+        font_size = self.config.get("overlay.font_size", 18)
+        self.font_size_label = QLabel(f"{font_size} px")
+        overlay_form.addRow("字体大小:", self.font_size_label)
+        
+        overlay_layout.addLayout(overlay_form)
+        layout.addWidget(overlay_group)
+        
+        # 热键配置
+        hotkey_group = QGroupBox("快捷键配置")
+        hotkey_layout = QVBoxLayout(hotkey_group)
+        
+        hotkey_form = QFormLayout()
+        
+        # 显示/隐藏字幕窗口
+        overlay_key = self.config.get("hotkeys.overlay_visibility", "Ctrl+F4")
+        hotkey_form.addRow("显示/隐藏字幕:", QLabel(overlay_key))
+        
+        # 切换自动/手动模式
+        mode_key = self.config.get("hotkeys.transcription_mode", "Ctrl+F6")
+        hotkey_form.addRow("切换转录模式:", QLabel(mode_key))
+        
+        # 开始/结束监听
+        listen_key = self.config.get("hotkeys.listening_toggled", "Ctrl+F8")
+        hotkey_form.addRow("开始/结束监听:", QLabel(listen_key))
+        
+        # 上一条字幕
+        prev_key = self.config.get("hotkeys.prev_caption", "Ctrl+F7")
+        hotkey_form.addRow("上一条字幕:", QLabel(prev_key))
+        
+        # 下一条字幕
+        next_key = self.config.get("hotkeys.next_caption", "Ctrl+F9")
+        hotkey_form.addRow("下一条字幕:", QLabel(next_key))
+        
+        hotkey_layout.addLayout(hotkey_form)
+        layout.addWidget(hotkey_group)
+        
+        # 提示信息
+        hint_label = QLabel("提示：以上设置可在 config.yaml 或高级设置中修改")
+        hint_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px;")
+        layout.addWidget(hint_label)
+        
+        layout.addStretch()
+        
+        return tab
     
     def _load_audio_devices(self):
         """加载音频设备列表 - 支持输入设备和输出设备"""
