@@ -1132,11 +1132,14 @@ class MainWindow(QMainWindow):
         return tab
     
     def _refresh_logs_display(self):
-        """刷新日志显示"""
+        """刷新日志显示 - 保持滚动位置在底部"""
         # 刷新转录日志
         if hasattr(self, 'transcription_log_text') and self.transcription_log_text:
             if self.transcription_log_data:
                 self.transcription_log_text.setText("\n".join(self.transcription_log_data))
+                # 滚动到底部
+                scrollbar = self.transcription_log_text.verticalScrollBar()
+                scrollbar.setValue(scrollbar.maximum())
             else:
                 self.transcription_log_text.clear()
         
