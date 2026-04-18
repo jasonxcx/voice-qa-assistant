@@ -43,5 +43,5 @@ if errorlevel 1 (
 
 echo [4/4] 启动程序...
 echo.
-REM 使用 pythonw 隐藏控制台窗口启动
-pythonw app.py
+REM 使用 VBScript 启动程序，完全隐藏控制台
+start /b wscript start_hidden.vbs
