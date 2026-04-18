@@ -1102,8 +1102,6 @@ class MainWindow(QMainWindow):
         self.system_log_text.setReadOnly(True)
         self.system_log_text.setStyleSheet(self.transcription_log_text.styleSheet())
         self.system_log_text.setPlaceholderText("暂无系统日志...")
-        # 禁用自动滚动到顶部，防止拖拽时弹回
-        self.system_log_text.setTextInteractionFlags(Qt.TextSelectableByMouse | Qt.TextSelectableByKeyboard)
         system_layout.addWidget(self.system_log_text)
         
         # 系统日志按钮
@@ -1160,6 +1158,9 @@ class MainWindow(QMainWindow):
                     lines = f.readlines()
                     last_lines = lines[-100:] if len(lines) > 100 else lines
                     self.system_log_text.setText("".join(last_lines))
+                    # 滚动到底部（用户通常想看最新的日志）
+                    scrollbar = self.system_log_text.verticalScrollBar()
+                    scrollbar.setValue(scrollbar.maximum())
             else:
                 self.system_log_text.setPlaceholderText("日志文件尚未生成...")
         except Exception as e:
