@@ -96,3 +96,18 @@ ui:
     listening_toggled: Ctrl+F8
     prev_caption: Ctrl+F7
     next_caption: Ctrl+F9
+
+# 对话配置（渐进式提问）
+conversation:
+  # 是否启用对话历史功能
+  enabled: true
+  # 最大历史对话轮数（0 表示禁用历史注入）
+  max_history_length: 5
+  # 历史回答截断长度（字符数）
+  truncate_length: 200
+  # 追问建议配置
+  followup:
+    # 是否启用追问建议
+    enabled: true
+    # 每次生成的追问建议数量
+    max_suggestions: 3

@@ -1,6 +1,8 @@
 # Worktrees
 .worktrees/
 .claude
+/.codex
+/.opencode
 debug_audio
 worktrees/
 

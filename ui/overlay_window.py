@@ -189,6 +189,18 @@ class CaptionHistory(QWidget):
                 current_answer = self.pages[self.current_page]["answer"]
                 self.pages[self.current_page]["answer"] = current_answer + text
             self._display_current()
+        elif caption_type == "followup":
+            # 追问建议类型，追加到当前页回答
+            if self.current_page < 0 or self.current_page >= len(self.pages):
+                # 如果还没有页面，创建一个临时页面
+                self.pages.append({"question": "追问建议", "answer": text})
+                self.current_page = 0
+            else:
+                # 追加到当前页的回答
+                current_answer = self.pages[self.current_page]["answer"]
+                self.pages[self.current_page]["answer"] = current_answer + text
+            self._display_current()
+            self._update_buttons()
         elif caption_type == "error":
             # 错误类型，添加为新页面的问题部分
             self.pages.append({"question": f"错误：{text}", "answer": ""})
@@ -289,6 +301,60 @@ class CaptionHistory(QWidget):
         self.current_page = -1
         self._display_current()
         self._update_buttons()
+
+    def clear_history(self):
+        """清空所有历史页面（用于开始新会话）"""
+        self.pages.clear()
+        self.current_page = -1
+        self._display_current()
+        self._update_buttons()
+
+    def _truncate_answer(self, answer: str, max_length: int = 200) -> str:
+        """截断回答到指定长度"""
+        if len(answer) <= max_length:
+            return answer
+        return answer[:max_length] + "..."
+
+    def get_history_for_prompt(self, max_history: int = 5, truncate_length: int = 200) -> str:
+        """
+        获取格式化的历史对话用于 LLM prompt 注入
+        
+        Args:
+            max_history: 最大历史轮数（0 返回空）
+            truncate_length: 每条回答的最大字符数
+            
+        Returns:
+            格式化的历史对话字符串，按时间正序排列
+        """
+        if max_history <= 0:
+            return ""
+        
+        # 过滤有效页面（有问题或回答的）
+        valid_pages = [p for p in self.pages if p.get("question", "") or p.get("answer", "")]
+        
+        if not valid_pages:
+            return ""
+        
+        # 取最近 N 条
+        recent_pages = valid_pages[-max_history:]
+        
+        # 格式化为 Q&A 对（按时间正序）
+        parts = []
+        for page in recent_pages:
+            question = page.get("question", "").strip()
+            answer = page.get("answer", "").strip()
+            
+            if question or answer:
+                # 截断回答
+                truncated_answer = self._truncate_answer(answer, truncate_length)
+                parts.append(f"Q: {question}\nA: {truncated_answer}")
+        
+        if not parts:
+            return ""
+        
+        # 添加 section header
+        history_text = "## 前序对话（供参考，理解追问上下文）\n" + "\n\n".join(parts)
+        return history_text
 
     def set_font_size(self, size):
         self._update_font(size)
@@ -958,6 +1024,12 @@ class OverlayWindow(QWidget):
 
     def update_caption(self, text, caption_type="answer"):
         self.caption_history.add_caption(text, caption_type)
+    
+    def show_followup_suggestions(self, suggestions: list):
+        """显示追问建议"""
+        if suggestions:
+            followup_text = "\n\n💡 追问建议（仅供参考）：\n" + "\n".join(suggestions)
+            self.caption_history.add_caption(followup_text, "followup")
 
     def clear_caption(self):
         self.caption_history.clear()

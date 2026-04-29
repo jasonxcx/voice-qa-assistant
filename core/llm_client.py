@@ -98,12 +98,13 @@ class LLMClient:
             base_url=base_url
         )
 
-    def build_system_prompt(self, document_text: str = "") -> str:
+    def build_system_prompt(self, document_text: str = "", history_text: str = "") -> str:
         """
         构建系统提示词
 
         Args:
             document_text: 导入的文档文本
+            history_text: 历史对话上下文（可选）
 
         Returns:
             系统提示词
@@ -119,6 +120,12 @@ class LLMClient:
 
 请结合以上文档信息，生成回答。"""
 
+        # 在文档信息之后、回答规则之前插入历史上下文
+        if history_text:
+            base_prompt += f"""
+
+{history_text}"""
+
         base_prompt += f"""
 ## 回答规则
 1. **简短精炼**: 每个回答控制在 {self.config.llm_prompts_words} 字，只列出关键点
@@ -132,13 +139,14 @@ class LLMClient:
 
         return base_prompt
 
-    async def generate_answer(self, question: str, resume_data: Optional[dict] = None) -> str:
+    async def generate_answer(self, question: str, resume_data: Optional[dict] = None, history_text: str = "") -> str:
         """
         生成回答
 
         Args:
             question: 问题文本
             resume_data: 文档数据（可选）
+            history_text: 历史对话上下文（可选）
 
         Returns:
             AI 生成的回答
@@ -150,7 +158,7 @@ class LLMClient:
             parser = ResumeParser()
             document_text = parser.format_for_prompt(resume_data)
 
-        system_prompt = self.build_system_prompt(document_text)
+        system_prompt = self.build_system_prompt(document_text, history_text)
 
         # 简短回答的 Prompt 强化
         prompt = f"""请回答以下问题（{self.config.llm_prompts_words} 字，只列关键点）：
@@ -168,7 +176,8 @@ class LLMClient:
 
     async def generate_answer_stream(self, question: str,
                                      resume_data: Optional[dict] = None,
-                                     callback: Optional[Callable[[str], None]] = None) -> str:
+                                     callback: Optional[Callable[[str], None]] = None,
+                                     history_text: str = "") -> str:
         """
         流式生成回答
 
@@ -176,6 +185,7 @@ class LLMClient:
             question: 问题文本
             resume_data: 文档数据（可选）
             callback: 每收到一段文本的回调函数
+            history_text: 历史对话上下文（可选）
 
         Returns:
             AI 生成的完整回答
@@ -187,7 +197,7 @@ class LLMClient:
             parser = ResumeParser()
             document_text = parser.format_for_prompt(resume_data)
 
-        system_prompt = self.build_system_prompt(document_text)
+        system_prompt = self.build_system_prompt(document_text, history_text)
 
         prompt = f"""请回答以下问题（{self.config.llm_prompts_words} 字，只列关键点）：
 
@@ -201,6 +211,63 @@ class LLMClient:
             max_completion_tokens=self.config.llm_max_completion_tokens_stream,
             reasoning_effort=self.config.llm_reasoning_effort
         )
+
+    async def generate_followup_suggestions(self, question: str, answer: str, 
+                                           history_text: str = "",
+                                           max_suggestions: int = 3) -> list:
+        """
+        生成追问建议
+        
+        Args:
+            question: 当前问题
+            answer: 当前回答
+            history_text: 历史对话上下文
+            max_suggestions: 最大追问建议数量
+            
+        Returns:
+            追问建议列表
+        """
+        # 构建追问建议 prompt
+        followup_prompt = f"""你是一个专业的面试官。基于以下对话上下文，生成 {max_suggestions} 个追问建议（用于深度挖掘候选人知识）。
+
+{history_text if history_text else ""}
+
+当前问题：{question}
+当前回答：{answer}
+
+请生成 {max_suggestions} 个追问建议，要求：
+1. 与当前话题相关
+2. 有深度，能进一步考察候选人
+3. 用简洁的疑问句格式
+4. 只输出追问问题，每行一个，不要编号，不要额外解释
+
+追问建议："""
+
+        system_prompt = f"""你是一个专业的{self.config.llm_prompts_theme}面试官。
+请生成简洁、有深度的追问问题。
+只输出问题本身，不要任何前缀或解释。"""
+
+        try:
+            response = await self.client.generate(
+                followup_prompt, system_prompt,
+                temperature=0.7,  # 稍高温度以生成多样化问题
+                max_completion_tokens=300,
+                reasoning_effort="none"
+            )
+            
+            # 解析追问建议（每行一个）
+            suggestions = [s.strip() for s in response.strip().split('\n') if s.strip()]
+            
+            # 限制数量
+            suggestions = suggestions[:max_suggestions]
+            
+            # 添加"仅供参考"前缀
+            suggestions = [f"（仅供参考）{s}" for s in suggestions]
+            
+            return suggestions
+        except Exception as e:
+            print(f"[LLM] 生成追问建议失败：{e}", flush=True)
+            return []
 
 if __name__ == '__main__':
     from core.config import get_config

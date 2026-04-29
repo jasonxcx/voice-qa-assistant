@@ -324,6 +324,34 @@ class Config:
         """快捷键：下一条字幕记录"""
         return self.get("ui.keyboard_hotkey.next_caption", "Ctrl+F9")
 
+    # ========== 对话配置（渐进式提问） ==========
+
+    @property
+    def conversation_enabled(self) -> bool:
+        """是否启用对话历史功能"""
+        return self.get("conversation.enabled", True)
+
+    @property
+    def conversation_max_history_length(self) -> int:
+        """最大历史对话轮数"""
+        return self.get("conversation.max_history_length", 5)
+
+    @property
+    def conversation_truncate_length(self) -> int:
+        """历史回答截断长度（字符数）"""
+        return self.get("conversation.truncate_length", 200)
+
+    @property
+    def conversation_followup_enabled(self) -> bool:
+        """是否启用追问建议"""
+        return self.get("conversation.followup.enabled", True)
+
+    @property
+    def conversation_followup_max_suggestions(self) -> int:
+        """每次生成的追问建议数量"""
+        return self.get("conversation.followup.max_suggestions", 3)
+
+
 # 全局配置实例
 _config: Optional[Config] = None
 

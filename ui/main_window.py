@@ -56,6 +56,7 @@ class MainWindow(QMainWindow):
     token_signal = Signal(str, int)  # token, page_index
     complete_signal = Signal(str)    # answer
     error_signal = Signal(str)       # error_msg
+    followup_signal = Signal(list)   # 追问建议列表
 
     def __init__(self, overlay_window, audio_capture, llm_client):
         super().__init__()
@@ -395,6 +396,14 @@ class MainWindow(QMainWindow):
         self.advanced_btn.clicked.connect(self._open_advanced_settings)
         button_layout.addWidget(self.advanced_btn)
         
+        # 开始新会话按钮
+        self.new_session_btn = QPushButton("🔄 新会话")
+        self.new_session_btn.setMinimumHeight(45)
+        self.new_session_btn.setStyleSheet(DANGER_BUTTON)
+        self.new_session_btn.setToolTip("清空对话历史并开始新会话")
+        self.new_session_btn.clicked.connect(self._start_new_session)
+        button_layout.addWidget(self.new_session_btn)
+        
         layout.addLayout(button_layout)
 
         # 字幕状态
@@ -644,6 +653,14 @@ class MainWindow(QMainWindow):
         self.save_btn.setStyleSheet(self.caption_toggle_btn.styleSheet())
         self.save_btn.clicked.connect(self._save_config)
         button_layout.addWidget(self.save_btn)
+        
+        # 开始新会话按钮
+        self.new_session_btn = QPushButton("🔄 新会话")
+        self.new_session_btn.setMinimumHeight(45)
+        self.new_session_btn.setStyleSheet(DANGER_BUTTON)
+        self.new_session_btn.setToolTip("清空对话历史并开始新会话")
+        self.new_session_btn.clicked.connect(self._start_new_session)
+        button_layout.addWidget(self.new_session_btn)
         
         layout.addLayout(button_layout)
         layout.addStretch()
@@ -1464,6 +1481,7 @@ class MainWindow(QMainWindow):
         self.token_signal.connect(self._on_token_update)
         self.complete_signal.connect(self._on_generation_complete)
         self.error_signal.connect(self._on_llm_error_slot)
+        self.followup_signal.connect(self._on_followup_suggestions_ready)
 
         self.volume_timer = QTimer()
         self.volume_timer.timeout.connect(self._update_volume_display)
@@ -2389,6 +2407,14 @@ class MainWindow(QMainWindow):
             current_page_index = self.overlay.caption_history.current_page
             print(f"[DEBUG] _generate_and_show_answer_stream: start, question='{question[:50]}...', current_page_index={current_page_index}", flush=True)
 
+            # 获取历史对话上下文
+            history_text = ""
+            if self.config.conversation_enabled:
+                history_text = self.overlay.caption_history.get_history_for_prompt(
+                    max_history=self.config.conversation_max_history_length,
+                    truncate_length=self.config.conversation_truncate_length
+                )
+            
             def on_token(token: str):
                 """每个 token 生成时的回调"""
                 nonlocal full_answer
@@ -2396,16 +2422,45 @@ class MainWindow(QMainWindow):
                 # 发送信号到主线程更新UI
                 self.token_signal.emit(token, current_page_index)
 
-            full_answer = await self.llm_client.generate_answer_stream(question, self.resume_data, on_token)
+            full_answer = await self.llm_client.generate_answer_stream(
+                question, 
+                self.resume_data, 
+                on_token,
+                history_text=history_text
+            )
             print(f"[DEBUG] _generate_and_show_answer_stream: done, answer len={len(full_answer)}", flush=True)
             log_llm(question, full_answer, self.config.llm_mode)
             # 发送完成信号
             self.complete_signal.emit(full_answer)
+            
+            # 异步生成追问建议
+            if self.config.conversation_followup_enabled and history_text:
+                threading.Thread(
+                    target=self._run_generate_followup_suggestions,
+                    args=(question, full_answer, history_text),
+                    daemon=True
+                ).start()
         except Exception as e:
             error_msg = f"生成失败：{str(e)}"
             log_system(error_msg, logging.ERROR)
             print(f"[DEBUG] _generate_and_show_answer_stream: error={e}", flush=True)
             self.error_signal.emit(error_msg)
+    
+    def _run_generate_followup_suggestions(self, question: str, answer: str, history_text: str):
+        """在独立线程中生成追问建议"""
+        try:
+            import asyncio
+            suggestions = asyncio.run(self.llm_client.generate_followup_suggestions(
+                question, 
+                answer, 
+                history_text,
+                max_suggestions=self.config.conversation_followup_max_suggestions
+            ))
+            if suggestions:
+                # 通过信号发送到 UI
+                self.followup_signal.emit(suggestions)
+        except Exception as e:
+            print(f"[LLM] 追问建议生成失败：{e}", flush=True)
 
     @Slot(str, int)
     def _on_token_update(self, token: str, page_index: int):
@@ -2569,6 +2624,30 @@ class MainWindow(QMainWindow):
         """打开高级设置对话框"""
         dialog = AdvancedSettingsDialog(self.config, self)
         dialog.exec()
+    
+    @Slot(list)
+    def _on_followup_suggestions_ready(self, suggestions: list):
+        """追问建议就绪（在主线程中调用）"""
+        # 在 overlay 中显示追问建议
+        if suggestions and self.overlay.isVisible():
+            followup_text = "\n\n💡 追问建议（仅供参考）：\n" + "\n".join(suggestions)
+            self.overlay.update_caption(followup_text, "followup")
+    
+    def _start_new_session(self):
+        """开始新会话 - 清空历史"""
+        reply = QMessageBox.question(
+            self, 
+            "开始新会话", 
+            "确定要清空所有对话历史并开始新会话吗？",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        if reply == QMessageBox.Yes:
+            self.overlay.caption_history.clear_history()
+            self.transcription_log_data.clear()
+            if hasattr(self, 'transcription_log_text') and self.transcription_log_text:
+                self.transcription_log_text.clear()
+            log_system("新会话开始，已清空历史", logging.INFO)
     
     def closeEvent(self, event):
         """关闭窗口时的处理"""
